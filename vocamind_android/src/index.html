@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>VocaMind</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script type="module" src="/main.js" defer></script>
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <h1>VocaMind 对话</h1>
+      <span id="status" class="status">未连接</span>
+    </header>
+
+    <div class="settings">
+      <label>WebSocket 地址
+        <input id="wsUrl" />
+      </label>
+    </div>
+
+    <div id="chat" class="chat"></div>
+
+    <footer class="bottom">
+      <div class="composer">
+        <input id="input" placeholder="输入文字发送" autocomplete="off" />
+        <div class="actions">
+          <button id="micBtn" class="secondary" disabled title="开麦说话">🎤</button>
+          <button id="connectBtn" class="secondary">连接</button>
+          <button id="sendBtn" disabled>发送</button>
+        </div>
+      </div>
+      <p class="hint">先运行 python main.py，模拟器用 ws://10.0.2.2:9001</p>
+    </footer>
+  </div>
+</body>
+</html>

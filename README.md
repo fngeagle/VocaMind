@@ -8,6 +8,7 @@
 - **ASR / TTS**：通过 OpenAI 兼容 API 调用语音识别与合成（默认 SiliconFlow）
 - **双 LLM 架构**：Voice LLM 负责前台对话与任务派发，Agent LLM 负责后台工具调用与任务执行
 - **Web 测试页**：内置 `frontend/index.html`，可在浏览器中快速体验语音对话
+- **Android 客户端**：基于 Tauri 2.0 的跨平台移动端，见 `vocamind_android/`
 - **可配置管道**：ASR、TTS、LLM 模型与 API 均可通过环境变量或命令行参数调整
 
 ## 环境要求
@@ -80,6 +81,32 @@ python main.py --ws-port 9001 --reply-mode audio --no-interruption
 
 用浏览器打开 `frontend/index.html`，将 WebSocket 地址设为 `ws://localhost:9001`，即可开始语音对话。
 
+## Android 客户端（Tauri 2.0）
+
+Android 端位于 `vocamind_android/`，使用 Tauri 2.0 + 原生 WebView，通过 WebSocket 连接后端语音服务。
+
+### 环境要求
+
+- [Node.js](https://nodejs.org/) 18+
+- [Rust](https://www.rust-lang.org/tools/install)
+- [Android Studio](https://developer.android.com/studio)（含 SDK、NDK）
+- Tauri CLI：`npm install -g @tauri-apps/cli@^2`
+
+### 构建与运行
+
+```bash
+cd vocamind_android
+npm install
+npm run tauri android dev
+```
+
+### WebSocket 地址
+
+- **Android 模拟器**：默认 `ws://10.0.2.2:9001`（映射宿主机 localhost）
+- **真机调试**：改为电脑的局域网 IP，如 `ws://192.168.1.100:9001`
+
+需先在本机启动 Python 后端（`python main.py`），再运行 Android 客户端。
+
 ## 项目结构
 
 ```
@@ -97,6 +124,7 @@ VocaMind/
 │   ├── memory/          # 会话记忆
 │   └── tools/           # Agent 工具集
 ├── frontend/            # Web 测试界面
+├── vocamind_android/    # Tauri 2.0 Android 客户端
 ├── ref_audio/           # TTS 参考音色
 ├── tests/               # 单元测试
 └── .env.example         # 环境变量示例

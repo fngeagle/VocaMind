@@ -38,3 +38,11 @@ Thumbs.db
 # 本地音频参考（wav 体积较大，按需自备）
 ref_audio/*.wav
 ref_audio/ref_wav/
+
+# Tauri / Android 客户端 (vocamind_android)
+vocamind_android/node_modules/
+vocamind_android/src-tauri/target/
+vocamind_android/src-tauri/gen/android/**/build/
+vocamind_android/src-tauri/gen/android/.gradle/
+vocamind_android/src-tauri/gen/android/local.properties
+vocamind_android/src-tauri/gen/android/**/jniLibs/*.so

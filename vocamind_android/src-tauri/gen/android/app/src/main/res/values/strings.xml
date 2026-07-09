@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">"tauri-android-test"</string>
+    <string name="main_activity_title">"tauri-android-test"</string>
+</resources>
