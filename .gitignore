@@ -1,0 +1,40 @@
+# 配置文件（含 API Key，禁止上传）
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# 测试与缓存
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 运行时数据
+.conversations/
+.memory/
+.tasks/
+.task_outputs/
+.transcripts/
+
+# IDE / 编辑器
+.cursor/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 本地音频参考（wav 体积较大，按需自备）
+ref_audio/*.wav
+ref_audio/ref_wav/

@@ -1,0 +1,9 @@
+numpy
+scipy
+soundfile
+miniaudio
+onnxruntime
+websockets
+openai>=1.0
+requests
+python-dotenv
