@@ -9,16 +9,38 @@ import {
   appendAttachmentCards,
   openArtifactModal,
 } from "./js/artifacts.js";
+import { renderMarkdown } from "./js/markdown_render.js";
+import { handleChatToolEvent, resetChatToolCards } from "./js/tool_cards.js";
+import { initBackgroundPanel, getBackgroundPanel } from "./js/background_panel.js";
 
 const SAMPLE_RATE = 16000;
 const ASR_KEY_STORAGE = "vocamind_asr_api_key";
 const ASR_URL_STORAGE = "vocamind_asr_api_url";
 const ASR_MODEL_STORAGE = "vocamind_asr_model";
-const uid = crypto.randomUUID();
+const UID_STORAGE = "vocamind_uid";
+const THEME_STORAGE = "vocamind_theme";
+const VOICE_PLAYBACK_STORAGE = "vocamind_voice_playback";
+const THEME_COLORS = { light: "#f5f7fb", dark: "#0a0a0f" };
+
+function getOrCreateUid() {
+  let id = localStorage.getItem(UID_STORAGE);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(UID_STORAGE, id);
+  }
+  return id;
+}
+
+const uid = getOrCreateUid();
 
 let connection = null;
 let userInputCount = 0;
 let busy = false;
+let historySynced = false;
+let syncRetryTimer = null;
+let syncAttempts = 0;
+const MAX_SYNC_ATTEMPTS = 10;
+const SYNC_RETRY_MS = 600;
 let assistantEl = null;
 let lastUserEl = null;
 
@@ -37,10 +59,46 @@ let currentAudioSource = null;
 const $ = (id) => document.getElementById(id);
 const chat = $("chat");
 const statusEl = $("status");
+const statusDot = $("statusDot");
 const inputEl = $("input");
 const sendBtn = $("sendBtn");
 const connectBtn = $("connectBtn");
 const micBtn = $("micBtn");
+const viewSettings = $("viewSettings");
+const settingsBtn = $("settingsBtn");
+const backBtn = $("backBtn");
+const themeSegment = $("themeSegment");
+const voicePlaybackToggle = $("voicePlaybackToggle");
+
+function isVoicePlaybackEnabled() {
+  const stored = localStorage.getItem(VOICE_PLAYBACK_STORAGE);
+  if (stored === null) return true;
+  return stored === "true";
+}
+
+function persistVoicePlayback(enabled) {
+  localStorage.setItem(VOICE_PLAYBACK_STORAGE, enabled ? "true" : "false");
+  if (!enabled) stopPlayback();
+}
+
+function applyTheme(theme) {
+  const next = theme === "dark" ? "dark" : "light";
+  document.documentElement.setAttribute("data-theme", next);
+  localStorage.setItem(THEME_STORAGE, next);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", THEME_COLORS[next]);
+  themeSegment?.querySelectorAll(".segmented-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.theme === next);
+  });
+}
+
+function initPreferences() {
+  const theme = localStorage.getItem(THEME_STORAGE) || "light";
+  applyTheme(theme);
+  if (voicePlaybackToggle) {
+    voicePlaybackToggle.checked = isVoicePlaybackEnabled();
+  }
+}
 
 function getAsrConfig() {
   return {
@@ -75,16 +133,20 @@ function onSpeechStart() {
   }
 }
 
-function resetTurnState() {
-  userInputCount = 0;
+function resetConnectionState() {
   busy = false;
   finishAssistantBubble();
   lastUserEl = null;
   stopPlayback();
 }
 
+function resetTurnState() {
+  userInputCount = 0;
+  resetConnectionState();
+}
+
 async function onSpeechSegment(segment) {
-  if (!connection?.isOpen || busy) return;
+  if (!connection?.isOpen || busy || !historySynced) return;
 
   busy = true;
   sendBtn.disabled = true;
@@ -119,6 +181,18 @@ function processMicFrame(frame) {
 }
 
 function handleSocketMessage(data) {
+  if (data.type === "ready") {
+    tryRequestHistorySync();
+    return;
+  }
+  if (data.type === "history_sync") {
+    handleHistorySync(data);
+    return;
+  }
+  if (data.type === "tool_event") {
+    handleToolOutbound(data);
+    return;
+  }
   if (data.stop_playback) {
     if (!data.uid || data.uid === uid) {
       stopPlayback();
@@ -141,11 +215,13 @@ async function startMic() {
   if (micOn) return;
   if (!connection?.isOpen) {
     setStatus("请先连接", "err");
+    openSettings();
     return;
   }
   persistAsrConfig();
   if (!getAsrConfig().apiKey) {
     setStatus("请先填写 ASR API Key", "err");
+    openSettings();
     return;
   }
   try {
@@ -171,7 +247,6 @@ async function startMic() {
     micProcessor.connect(micContext.destination);
     micOn = true;
     micBtn.classList.add("active");
-    micBtn.textContent = "🔴";
     setStatus("麦克风已开", "ok");
   } catch (err) {
     setStatus(err.message || "麦克风打开失败", "err");
@@ -194,7 +269,6 @@ function stopMic() {
     micContext = null;
   }
   micBtn.classList.remove("active");
-  micBtn.textContent = "🎤";
 }
 
 async function toggleMic() {
@@ -204,14 +278,150 @@ async function toggleMic() {
 
 function setStatus(text, kind = "") {
   statusEl.textContent = text;
-  statusEl.className = "status" + (kind ? " " + kind : "");
+  if (statusDot) {
+    statusDot.className = "status-dot" + (kind ? " " + kind : "");
+  }
+}
+
+function openSettings() {
+  viewSettings?.classList.add("open");
+  viewSettings?.setAttribute("aria-hidden", "false");
+}
+
+function closeSettings() {
+  viewSettings?.classList.remove("open");
+  viewSettings?.setAttribute("aria-hidden", "true");
+}
+
+function updateEmptyState() {
+  const hasMessages = chat.querySelector(".msg, .artifact-card");
+  chat.classList.toggle("has-messages", !!hasMessages);
+}
+
+function handleToolOutbound(data) {
+  if (data.uid && data.uid !== uid) return;
+  if (!historySynced && !data.proactive) return;
+
+  const bgPanel = getBackgroundPanel();
+
+  if (data.scope === "agent") {
+    bgPanel?.handleToolEvent(data);
+    return;
+  }
+
+  handleChatToolEvent(chat, data);
+
+  if (data.tool_name === "dispatch_task") {
+    if (data.event === "start") {
+      bgPanel?.noteTaskDispatched(data);
+    } else if (data.event === "end" && data.task_id) {
+      bgPanel?.ensureTaskSection(data.task_id, data.arguments?.subject);
+    }
+  }
+
+  updateEmptyState();
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function clearChatMessages() {
+  chat.querySelectorAll(".msg, .artifact-card, .history-notice").forEach((el) => el.remove());
+  resetChatToolCards();
+  updateEmptyState();
+}
+
+function clearSyncRetry() {
+  if (syncRetryTimer) {
+    clearTimeout(syncRetryTimer);
+    syncRetryTimer = null;
+  }
+}
+
+function finishHistorySync() {
+  historySynced = true;
+  clearSyncRetry();
+  if (connection?.isOpen && !busy) {
+    sendBtn.disabled = false;
+    micBtn.disabled = false;
+  }
+  setStatus(micOn ? "麦克风已开" : "已连接", "ok");
+}
+
+function scheduleHistorySyncRetry() {
+  clearSyncRetry();
+  syncRetryTimer = setTimeout(() => {
+    if (historySynced) return;
+    if (syncAttempts >= MAX_SYNC_ATTEMPTS) {
+      console.warn("历史同步超时，已允许继续对话");
+      finishHistorySync();
+      return;
+    }
+    syncAttempts += 1;
+    tryRequestHistorySync();
+    scheduleHistorySyncRetry();
+  }, SYNC_RETRY_MS);
+}
+
+function beginHistorySync() {
+  historySynced = false;
+  syncAttempts = 0;
+  sendBtn.disabled = true;
+  setStatus("同步历史中…", "busy");
+  scheduleHistorySyncRetry();
+}
+
+function tryRequestHistorySync() {
+  if (!connection?.isOpen) return;
+  try {
+    connection.send({ type: "sync_history", uid });
+  } catch (err) {
+    console.warn("发送历史同步请求失败", err);
+  }
+}
+
+function requestHistorySync() {
+  beginHistorySync();
+  tryRequestHistorySync();
+}
+
+function handleHistorySync(data) {
+  if (data.uid && data.uid !== uid) return;
+
+  clearChatMessages();
+  userInputCount = data.user_input_count || 0;
+  resetConnectionState();
+
+  if (data.has_summary) {
+    const notice = document.createElement("div");
+    notice.className = "history-notice";
+    notice.textContent = "更早的对话已压缩，助手仍保留上下文记忆";
+    chat.appendChild(notice);
+  }
+
+  for (const turn of data.turns || []) {
+    const role = turn.role === "user" ? "user" : "assistant";
+    appendMsg(role, turn.content || "");
+  }
+
+  finishHistorySync();
+  updateEmptyState();
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function setAssistantContent(el, rawText) {
+  el._rawText = rawText;
+  el.innerHTML = renderMarkdown(rawText);
 }
 
 function appendMsg(role, text) {
   const el = document.createElement("div");
   el.className = `msg ${role}`;
-  el.textContent = text;
+  if (role === "assistant") {
+    setAssistantContent(el, text);
+  } else {
+    el.textContent = text;
+  }
   chat.appendChild(el);
+  updateEmptyState();
   chat.scrollTop = chat.scrollHeight;
   return el;
 }
@@ -249,7 +459,7 @@ function pcmBase64ToBuffer(b64) {
 }
 
 function enqueueAudio(b64) {
-  if (!b64) return;
+  if (!b64 || !isVoicePlaybackEnabled()) return;
   audioQueue.push(pcmBase64ToBuffer(b64));
   if (!audioPlaying) playNextAudio();
 }
@@ -278,26 +488,32 @@ function playNextAudio() {
 
 function onConnectionStateChange(state) {
   if (state === VoiceConnection.State.CONNECTED) {
-    resetTurnState();
-    setStatus(micOn ? "麦克风已开" : "已连接", "ok");
-    sendBtn.disabled = false;
+    resetConnectionState();
+    beginHistorySync();
+    tryRequestHistorySync();
     micBtn.disabled = false;
     connectBtn.textContent = "已连接";
+    connectBtn.disabled = true;
+    closeSettings();
   } else if (state === VoiceConnection.State.CONNECTING) {
     setStatus("连接中…", "busy");
     sendBtn.disabled = true;
     micBtn.disabled = true;
-    connectBtn.textContent = "连接中";
+    connectBtn.textContent = "连接中…";
+    connectBtn.disabled = true;
   } else {
     stopMic();
     micBtn.disabled = true;
+    clearSyncRetry();
+    historySynced = false;
     if (!busy) {
       setStatus("未连接", "");
       sendBtn.disabled = true;
     } else {
       setStatus("思考中…", "busy");
     }
-    connectBtn.textContent = "重连";
+    connectBtn.textContent = "重新连接";
+    connectBtn.disabled = false;
   }
 }
 
@@ -321,10 +537,12 @@ function handleAttachments(attachments) {
   appendAttachmentCards(chat, attachments, {
     onOpen: (att) => openArtifactModal(att, getArtifactBaseUrl()),
   });
+  updateEmptyState();
 }
 
 function handleOutbound(data) {
   if (data.uid !== uid) return;
+  if (!historySynced && !data.proactive) return;
   if (!data.proactive && data.user_input_count !== userInputCount) {
     console.warn(
       "丢弃出站消息: count 不匹配",
@@ -353,7 +571,7 @@ function handleOutbound(data) {
   }
   if (data.answer_text) {
     const el = ensureAssistantBubble();
-    el.textContent += data.answer_text;
+    setAssistantContent(el, (el._rawText || "") + data.answer_text);
     chat.scrollTop = chat.scrollHeight;
   }
   if (data.answer_audio && data.answer_audio !== "" && data.answer_audio !== 0) {
@@ -372,7 +590,7 @@ function connect() {
   if (connection) {
     connection.disconnect();
   }
-  resetTurnState();
+  resetConnectionState();
   connection = new VoiceConnection({
     url,
     onStateChange: onConnectionStateChange,
@@ -387,10 +605,16 @@ async function sendText() {
   if (!text) return;
   if (!connection?.isOpen) {
     setStatus("请先连接", "err");
+    openSettings();
     return;
   }
   if (busy) {
     setStatus("请等待上一条回复", "err");
+    return;
+  }
+  if (!historySynced) {
+    tryRequestHistorySync();
+    setStatus("同步历史中…", "busy");
     return;
   }
 
@@ -409,6 +633,8 @@ async function sendText() {
 }
 
 export function initVoiceApp() {
+  initPreferences();
+  initBackgroundPanel($("bgPanel"));
   $("wsUrl").value = defaultWsUrl();
   $("asrUrl").value = localStorage.getItem(ASR_URL_STORAGE) || DEFAULT_ASR_URL;
   $("asrModel").value = localStorage.getItem(ASR_MODEL_STORAGE) || DEFAULT_ASR_MODEL;
@@ -417,6 +643,8 @@ export function initVoiceApp() {
   connectBtn.addEventListener("click", connect);
   micBtn.addEventListener("click", toggleMic);
   sendBtn.addEventListener("click", sendText);
+  settingsBtn?.addEventListener("click", openSettings);
+  backBtn?.addEventListener("click", closeSettings);
   inputEl.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -426,6 +654,14 @@ export function initVoiceApp() {
   ["asrKey", "asrUrl", "asrModel"].forEach((id) => {
     $(id)?.addEventListener("change", persistAsrConfig);
   });
+  themeSegment?.querySelectorAll(".segmented-btn").forEach((btn) => {
+    btn.addEventListener("click", () => applyTheme(btn.dataset.theme));
+  });
+  voicePlaybackToggle?.addEventListener("change", () => {
+    persistVoicePlayback(voicePlaybackToggle.checked);
+  });
+  updateEmptyState();
+  connect();
 }
 
 window.addEventListener("DOMContentLoaded", () => {

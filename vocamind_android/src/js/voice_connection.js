@@ -60,7 +60,6 @@ export class VoiceConnection {
       if (this._ws !== ws) return;
       try {
         const data = JSON.parse(ev.data);
-        if (data.type === "ready") return;
         this.onMessage(data);
       } catch (_) {
         /* 忽略非 JSON */

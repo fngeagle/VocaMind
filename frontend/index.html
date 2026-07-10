@@ -78,19 +78,35 @@
       padding: 10px 14px;
       border-radius: 12px;
       line-height: 1.55;
-      white-space: pre-wrap;
       word-break: break-word;
     }
     .msg.user {
       align-self: flex-end;
       background: #2563eb;
       border-bottom-right-radius: 4px;
+      white-space: pre-wrap;
     }
     .msg.assistant {
       align-self: flex-start;
       background: #2a2f3a;
       border-bottom-left-radius: 4px;
+      white-space: normal;
+      max-width: 92%;
     }
+    .msg.assistant > :first-child { margin-top: 0; }
+    .msg.assistant > :last-child { margin-bottom: 0; }
+    .msg.assistant p { margin: 0.4em 0; }
+    .msg.assistant h1, .msg.assistant h2, .msg.assistant h3 { margin: 0.55em 0 0.3em; font-weight: 600; }
+    .msg.assistant ul, .msg.assistant ol { margin: 0.35em 0; padding-left: 1.25em; }
+    .msg.assistant code { font-size: 0.84em; background: #1a1d27; padding: 1px 5px; border-radius: 4px; }
+    .msg.assistant pre { margin: 0.45em 0; padding: 10px 12px; background: #0f1117; border-radius: 8px; overflow-x: auto; font-size: 0.82rem; }
+    .msg.assistant pre code { background: none; padding: 0; }
+    .msg.assistant a { color: #93c5fd; }
+    .msg.assistant hr { border: none; border-top: 1px solid #3a3f4a; margin: 0.65em 0; }
+    .msg.assistant .md-table-wrap { overflow-x: auto; margin: 0.45em 0; }
+    .msg.assistant table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .msg.assistant th, .msg.assistant td { border: 1px solid #3a3f4a; padding: 6px 8px; }
+    .msg.assistant th { background: #1a1d27; }
     .msg.assistant.streaming::after {
       content: "▋";
       animation: blink 0.8s step-end infinite;
@@ -273,16 +289,33 @@
       appendAttachmentCards,
       openArtifactModal,
     } from "./js/artifacts.js";
+    import { renderMarkdown } from "./js/markdown_render.js";
 
     const SAMPLE_RATE = 16000;
     const ASR_KEY_STORAGE = "vocamind_asr_api_key";
     const ASR_URL_STORAGE = "vocamind_asr_api_url";
     const ASR_MODEL_STORAGE = "vocamind_asr_model";
-    const uid = crypto.randomUUID();
+    const UID_STORAGE = "vocamind_uid";
+
+    function getOrCreateUid() {
+      let id = localStorage.getItem(UID_STORAGE);
+      if (!id) {
+        id = crypto.randomUUID();
+        localStorage.setItem(UID_STORAGE, id);
+      }
+      return id;
+    }
+
+    const uid = getOrCreateUid();
 
     let connection = null;
     let userInputCount = 0;
     let busy = false;
+    let historySynced = false;
+    let syncRetryTimer = null;
+    let syncAttempts = 0;
+    const MAX_SYNC_ATTEMPTS = 10;
+    const SYNC_RETRY_MS = 600;
     let assistantEl = null;
     let lastUserEl = null;
 
@@ -339,16 +372,20 @@
       }
     }
 
-    function resetTurnState() {
-      userInputCount = 0;
+    function resetConnectionState() {
       busy = false;
       finishAssistantBubble();
       lastUserEl = null;
       stopPlayback();
     }
 
+    function resetTurnState() {
+      userInputCount = 0;
+      resetConnectionState();
+    }
+
     async function onSpeechSegment(segment) {
-      if (!connection?.isOpen || busy) return;
+      if (!connection?.isOpen || busy || !historySynced) return;
 
       busy = true;
       sendBtn.disabled = true;
@@ -382,7 +419,97 @@
       clientVad?.pushFrame(frame);
     }
 
+    function clearSyncRetry() {
+      if (syncRetryTimer) {
+        clearTimeout(syncRetryTimer);
+        syncRetryTimer = null;
+      }
+    }
+
+    function finishHistorySync() {
+      historySynced = true;
+      clearSyncRetry();
+      if (connection?.isOpen && !busy) {
+        sendBtn.disabled = false;
+        micBtn.disabled = false;
+      }
+      setStatus(micOn ? "麦克风已开" : "已连接", "ok");
+    }
+
+    function scheduleHistorySyncRetry() {
+      clearSyncRetry();
+      syncRetryTimer = setTimeout(() => {
+        if (historySynced) return;
+        if (syncAttempts >= MAX_SYNC_ATTEMPTS) {
+          console.warn("历史同步超时，已允许继续对话");
+          finishHistorySync();
+          return;
+        }
+        syncAttempts += 1;
+        tryRequestHistorySync();
+        scheduleHistorySyncRetry();
+      }, SYNC_RETRY_MS);
+    }
+
+    function beginHistorySync() {
+      historySynced = false;
+      syncAttempts = 0;
+      sendBtn.disabled = true;
+      setStatus("同步历史中…", "busy");
+      scheduleHistorySyncRetry();
+    }
+
+    function tryRequestHistorySync() {
+      if (!connection?.isOpen) return;
+      try {
+        connection.send({ type: "sync_history", uid });
+      } catch (err) {
+        console.warn("发送历史同步请求失败", err);
+      }
+    }
+
+    function requestHistorySync() {
+      beginHistorySync();
+      tryRequestHistorySync();
+    }
+
+    function clearChatMessages() {
+      chat.querySelectorAll(".msg, .artifact-card, .history-notice").forEach((el) => el.remove());
+    }
+
+    function handleHistorySync(data) {
+      if (data.uid && data.uid !== uid) return;
+
+      clearChatMessages();
+      userInputCount = data.user_input_count || 0;
+      resetConnectionState();
+
+      if (data.has_summary) {
+        const notice = document.createElement("div");
+        notice.className = "history-notice";
+        notice.textContent = "更早的对话已压缩，助手仍保留上下文记忆";
+        notice.style.cssText = "align-self:center;font-size:0.72rem;color:#6b7280;background:#1a1d27;border:1px dashed #2a2f3a;border-radius:999px;padding:6px 14px;text-align:center;max-width:90%;margin:4px auto;";
+        chat.appendChild(notice);
+      }
+
+      for (const turn of data.turns || []) {
+        const role = turn.role === "user" ? "user" : "assistant";
+        appendMsg(role, turn.content || "");
+      }
+
+      finishHistorySync();
+      chat.scrollTop = chat.scrollHeight;
+    }
+
     function handleSocketMessage(data) {
+      if (data.type === "ready") {
+        tryRequestHistorySync();
+        return;
+      }
+      if (data.type === "history_sync") {
+        handleHistorySync(data);
+        return;
+      }
       if (data.stop_playback) {
         if (!data.uid || data.uid === uid) {
           stopPlayback();
@@ -474,10 +601,19 @@
       statusEl.className = "status" + (kind ? " " + kind : "");
     }
 
+    function setAssistantContent(el, rawText) {
+      el._rawText = rawText;
+      el.innerHTML = renderMarkdown(rawText);
+    }
+
     function appendMsg(role, text) {
       const el = document.createElement("div");
       el.className = `msg ${role}`;
-      el.textContent = text;
+      if (role === "assistant") {
+        setAssistantContent(el, text);
+      } else {
+        el.textContent = text;
+      }
       chat.appendChild(el);
       chat.scrollTop = chat.scrollHeight;
       return el;
@@ -545,9 +681,9 @@
 
     function onConnectionStateChange(state) {
       if (state === VoiceConnection.State.CONNECTED) {
-        resetTurnState();
-        setStatus(micOn ? "麦克风已开" : "已连接", "ok");
-        sendBtn.disabled = false;
+        resetConnectionState();
+        beginHistorySync();
+        tryRequestHistorySync();
         micBtn.disabled = false;
         connectBtn.textContent = "已连接";
       } else if (state === VoiceConnection.State.CONNECTING) {
@@ -558,6 +694,8 @@
       } else {
         stopMic();
         micBtn.disabled = true;
+        clearSyncRetry();
+        historySynced = false;
         if (!busy) {
           setStatus("未连接", "");
           sendBtn.disabled = true;
@@ -593,6 +731,7 @@
 
     function handleOutbound(data) {
       if (data.uid !== uid) return;
+      if (!historySynced && !data.proactive) return;
       if (!data.proactive && data.user_input_count !== userInputCount) {
         console.warn(
           "丢弃出站消息: count 不匹配",
@@ -621,7 +760,7 @@
       }
       if (data.answer_text) {
         const el = ensureAssistantBubble();
-        el.textContent += data.answer_text;
+        setAssistantContent(el, (el._rawText || "") + data.answer_text);
         chat.scrollTop = chat.scrollHeight;
       }
       if (data.answer_audio && data.answer_audio !== "" && data.answer_audio !== 0) {
@@ -640,7 +779,7 @@
       if (connection) {
         connection.disconnect();
       }
-      resetTurnState();
+      resetConnectionState();
       connection = new VoiceConnection({
         url,
         onStateChange: onConnectionStateChange,
@@ -659,6 +798,11 @@
       }
       if (busy) {
         setStatus("请等待上一条回复", "err");
+        return;
+      }
+      if (!historySynced) {
+        tryRequestHistorySync();
+        setStatus("同步历史中…", "busy");
         return;
       }
 
@@ -691,6 +835,7 @@
     ["asrKey", "asrUrl", "asrModel"].forEach((id) => {
       $(id)?.addEventListener("change", persistAsrConfig);
     });
+    connect();
   </script>
 </body>
 </html>

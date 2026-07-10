@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from vocamind.agent.conditions import CONTINUATION_PROMPT, DEFAULT_MAX_TOKENS
 from vocamind.agent.state import AgentContext
+from vocamind.common.tool_events import build_tool_end, build_tool_start
 from vocamind.llm.tool_client import (
     ToolCallingClient,
     get_tool_calls,
@@ -72,6 +73,7 @@ def execute_tool_batch(
     ctx: AgentContext,
     assistant_message: Any,
     handlers: dict[str, Callable[..., str]],
+    emit: Optional[Callable[[dict[str, Any]], None]] = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     ctx.compacted_now = False
@@ -79,6 +81,19 @@ def execute_tool_batch(
         name = tc.function.name
         args = parse_tool_arguments(tc.function.arguments)
         logger.info("> %s", name)
+
+        if emit:
+            emit(
+                build_tool_start(
+                    tool_call_id=tc.id,
+                    tool_name=name,
+                    arguments=args,
+                    scope="agent",
+                    uid=ctx.uid,
+                    user_input_count=ctx.user_input_count,
+                    task_id=ctx.current_task_id,
+                )
+            )
 
         if name == "compact":
             ctx.messages[:] = compact_history(ctx.messages)
@@ -88,40 +103,85 @@ def execute_tool_batch(
 
         blocked = trigger_hooks("PreToolUse", name, args)
         if blocked:
-            results.append({"role": "tool", "tool_call_id": tc.id, "content": str(blocked)})
+            output = str(blocked)
+            status = "blocked"
+            results.append({"role": "tool", "tool_call_id": tc.id, "content": output})
+            if emit:
+                emit(
+                    build_tool_end(
+                        tool_call_id=tc.id,
+                        tool_name=name,
+                        status=status,
+                        content=output,
+                        scope="agent",
+                        uid=ctx.uid,
+                        user_input_count=ctx.user_input_count,
+                        task_id=ctx.current_task_id,
+                    )
+                )
             continue
 
         if name == "web_search":
             from vocamind.agent.conditions import MAX_WEB_SEARCH_PER_TASK
 
             if ctx.web_search_count >= MAX_WEB_SEARCH_PER_TASK:
-                results.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": (
-                            f"Error: web_search 已达本任务上限 ({MAX_WEB_SEARCH_PER_TASK} 次)。"
-                            "请基于已有搜索结果继续完成，不要再调用 web_search。"
-                        ),
-                    }
+                output = (
+                    f"Error: web_search 已达本任务上限 ({MAX_WEB_SEARCH_PER_TASK} 次)。"
+                    "请基于已有搜索结果继续完成，不要再调用 web_search。"
                 )
+                results.append(
+                    {"role": "tool", "tool_call_id": tc.id, "content": output}
+                )
+                if emit:
+                    emit(
+                        build_tool_end(
+                            tool_call_id=tc.id,
+                            tool_name=name,
+                            status="blocked",
+                            content=output,
+                            scope="agent",
+                            uid=ctx.uid,
+                            user_input_count=ctx.user_input_count,
+                            task_id=ctx.current_task_id,
+                        )
+                    )
                 continue
             ctx.web_search_count += 1
 
         from vocamind.agent.conditions import should_run_background_tool
         from vocamind.tools.background import start_background_task
 
-        if should_run_background_tool(name, args):
-            bg_id = start_background_task(tc.id, name, args, handlers)
-            output = f"[Background task {bg_id} started] Result will arrive as a task_notification."
-        else:
-            handler = handlers.get(name)
-            output = call_tool_handler(handler, args, name)
-            trigger_hooks("PostToolUse", name, output)
-            if name == "complete_task" and output.startswith("Completed"):
-                ctx.completed_by_tool = True
+        status = "success"
+        try:
+            if should_run_background_tool(name, args):
+                bg_id = start_background_task(tc.id, name, args, handlers)
+                output = f"[Background task {bg_id} started] Result will arrive as a task_notification."
+                status = "running"
+            else:
+                handler = handlers.get(name)
+                output = call_tool_handler(handler, args, name)
+                trigger_hooks("PostToolUse", name, output)
+                if name == "complete_task" and output.startswith("Completed"):
+                    ctx.completed_by_tool = True
+        except Exception as exc:
+            logger.exception("Agent 工具 %s 执行失败", name)
+            output = str(exc)
+            status = "error"
 
         results.append({"role": "tool", "tool_call_id": tc.id, "content": str(output)})
+        if emit:
+            emit(
+                build_tool_end(
+                    tool_call_id=tc.id,
+                    tool_name=name,
+                    status=status,
+                    content=str(output),
+                    scope="agent",
+                    uid=ctx.uid,
+                    user_input_count=ctx.user_input_count,
+                    task_id=ctx.current_task_id,
+                )
+            )
 
     return results
 

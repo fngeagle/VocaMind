@@ -3,45 +3,176 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#f5f7fb" />
   <title>VocaMind</title>
+  <script>
+    (function () {
+      var t = localStorage.getItem("vocamind_theme") || "light";
+      document.documentElement.setAttribute("data-theme", t);
+      var colors = { light: "#f5f7fb", dark: "#0a0a0f" };
+      var meta = document.querySelector('meta[name="theme-color"]');
+      if (meta) meta.setAttribute("content", colors[t] || colors.light);
+    })();
+  </script>
   <link rel="stylesheet" href="styles.css" />
   <script type="module" src="/main.js" defer></script>
 </head>
 <body>
   <div class="app">
-    <header class="top">
-      <h1>VocaMind 对话</h1>
-      <span id="status" class="status">未连接</span>
-    </header>
 
-    <div class="settings">
-      <label>WebSocket 地址
-        <input id="wsUrl" />
-      </label>
-      <label>ASR API Key
-        <input id="asrKey" type="password" placeholder="SiliconFlow Key" />
-      </label>
-      <label>ASR 模型
-        <input id="asrModel" />
-      </label>
-      <label>ASR API 地址
-        <input id="asrUrl" />
-      </label>
-    </div>
+    <!-- 对话主视图 -->
+    <main class="view view-chat" id="viewChat">
+      <header class="header">
+        <div class="header-brand">
+          <div class="logo" aria-hidden="true">V</div>
+          <div class="header-titles">
+            <h1>VocaMind</h1>
+            <div class="status-row">
+              <span class="status-dot" id="statusDot" aria-hidden="true"></span>
+              <span id="status" class="status-text">未连接</span>
+            </div>
+          </div>
+        </div>
+        <button id="settingsBtn" class="icon-btn" type="button" aria-label="打开设置">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+          </svg>
+        </button>
+      </header>
 
-    <div id="chat" class="chat"></div>
+      <section id="bgPanel" class="bg-panel" aria-label="后台 Agent 活动">
+        <button type="button" id="bgPanelToggle" class="bg-panel-bar" aria-expanded="false">
+          <span class="bg-panel-dot" aria-hidden="true"></span>
+          <div class="bg-panel-summary">
+            <span class="bg-panel-label">后台 Agent</span>
+            <span id="bgPanelStatus" class="bg-panel-status">空闲</span>
+            <span id="bgPanelHint" class="bg-panel-hint">暂无后台任务</span>
+          </div>
+          <span class="bg-panel-chevron" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </span>
+        </button>
+        <div class="bg-panel-body">
+          <div class="bg-panel-scroll">
+            <p class="bg-panel-empty">后台 Agent 的工具调用会显示在这里</p>
+          </div>
+        </div>
+      </section>
 
-    <footer class="bottom">
-      <div class="composer">
-        <input id="input" placeholder="输入文字发送" autocomplete="off" />
-        <div class="actions">
-          <button id="micBtn" class="secondary" disabled title="开麦说话">🎤</button>
-          <button id="connectBtn" class="secondary">连接</button>
-          <button id="sendBtn" disabled>发送</button>
+      <div id="chat" class="chat">
+        <div id="emptyState" class="empty-state">
+          <div class="empty-icon" aria-hidden="true">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+          </div>
+          <p class="empty-title">开始对话</p>
+          <p class="empty-desc">连接服务器后，输入文字或点击麦克风语音交流</p>
         </div>
       </div>
-      <p class="hint">先运行 python main.py；文档 HTTP 默认 9002（WS 端口 +1）。模拟器 WS 用 ws://10.0.2.2:9001，真机改为你电脑的局域网 IP。</p>
-    </footer>
+
+      <footer class="composer-bar">
+        <div class="composer">
+          <input id="input" placeholder="输入消息…" autocomplete="off" enterkeyhint="send" />
+          <div class="composer-actions">
+            <button id="micBtn" class="icon-action secondary" disabled title="开麦说话" aria-label="麦克风">
+              <svg class="icon-mic" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                <line x1="12" y1="19" x2="12" y2="23"/>
+                <line x1="8" y1="23" x2="16" y2="23"/>
+              </svg>
+            </button>
+            <button id="sendBtn" class="icon-action primary" disabled aria-label="发送">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"/>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </footer>
+    </main>
+
+    <!-- 设置视图（独立页面） -->
+    <aside class="view view-settings" id="viewSettings" aria-hidden="true">
+      <header class="settings-header">
+        <button id="backBtn" class="icon-btn" type="button" aria-label="返回对话">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+        </button>
+        <h2>设置</h2>
+        <div class="header-spacer"></div>
+      </header>
+
+      <div class="settings-scroll">
+        <section class="settings-group">
+          <h3 class="group-label">外观</h3>
+          <div class="settings-card">
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">主题</span>
+                <span class="setting-desc">切换亮色或深色界面</span>
+              </div>
+              <div class="segmented" id="themeSegment" role="group" aria-label="主题">
+                <button type="button" class="segmented-btn" data-theme="light">亮色</button>
+                <button type="button" class="segmented-btn" data-theme="dark">深色</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-group">
+          <h3 class="group-label">语音</h3>
+          <div class="settings-card">
+            <label class="setting-row toggle-row" for="voicePlaybackToggle">
+              <div class="setting-info">
+                <span class="setting-label">语音播报</span>
+                <span class="setting-desc">朗读助手回复内容</span>
+              </div>
+              <input type="checkbox" id="voicePlaybackToggle" class="toggle-input" checked />
+              <span class="toggle-switch" aria-hidden="true"></span>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-group">
+          <h3 class="group-label">连接</h3>
+          <div class="settings-card">
+            <label class="field">
+              <span class="field-label">WebSocket 地址</span>
+              <input id="wsUrl" inputmode="url" autocomplete="off" />
+            </label>
+            <button id="connectBtn" class="btn-connect" type="button">连接服务器</button>
+          </div>
+        </section>
+
+        <section class="settings-group">
+          <h3 class="group-label">语音识别 (ASR)</h3>
+          <div class="settings-card">
+            <label class="field">
+              <span class="field-label">API Key</span>
+              <input id="asrKey" type="password" placeholder="SiliconFlow Key" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span class="field-label">模型</span>
+              <input id="asrModel" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span class="field-label">API 地址</span>
+              <input id="asrUrl" inputmode="url" autocomplete="off" />
+            </label>
+          </div>
+        </section>
+
+        <p class="settings-hint">
+          先运行 <code>python main.py</code>；文档 HTTP 默认 9002（WS 端口 +1）。模拟器 WS 用 <code>ws://10.0.2.2:9001</code>，真机改为你电脑的局域网 IP。
+        </p>
+      </div>
+    </aside>
+
   </div>
 </body>
 </html>

@@ -116,10 +116,16 @@ def agent_loop_for_task(
         messages=[{"role": "user", "content": f"Task: {task_msg.subject}\n\n{task_msg.description}"}],
         max_tokens=config.agent_max_tokens,
         current_task_id=task_msg.task_id,
+        uid=task_msg.uid,
+        user_input_count=task_msg.user_input_count,
     )
     claim_task(task_msg.task_id, owner="agent")
     _sync_status(runtime, ctx)
     started_at = now_iso()
+
+    def emit_tool_event(message: dict) -> None:
+        if runtime.outbound_queue is not None:
+            runtime.outbound_queue.put(message)
 
     while not should_stop_agent(runtime.stop_event):
         inject_cron_messages(ctx.messages)
@@ -153,7 +159,7 @@ def agent_loop_for_task(
             trigger_hooks("Stop", ctx.messages)
             break
 
-        results = execute_tool_batch(ctx, assistant, handlers)
+        results = execute_tool_batch(ctx, assistant, handlers, emit=emit_tool_event)
         if ctx.compacted_now:
             continue
         if results:

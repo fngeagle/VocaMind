@@ -16,11 +16,13 @@ def build_agent_runtime(
     stop_event,
     task_queue: AgentTaskQueue,
     status_registry: StatusRegistry,
+    outbound_queue=None,
 ) -> AgentRuntime:
     return AgentRuntime(
         stop_event=stop_event,
         task_queue=task_queue,
         status_registry=status_registry,
+        outbound_queue=outbound_queue,
     )
 
 

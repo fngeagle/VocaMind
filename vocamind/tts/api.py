@@ -120,6 +120,12 @@ class APITTSHandler(TTSHandlerBase):
         return pcm
 
     def process(self, inputs: Dict[str, Any]) -> Iterator[Dict[str, Union[str, int, bool, np.ndarray]]]:
+        from vocamind.common.tool_events import is_tool_event
+
+        if is_tool_event(inputs):
+            yield inputs
+            return
+
         llm_sentence = inputs["answer_text"]
         uid = inputs["uid"]
         end_flag = inputs["end_flag"]

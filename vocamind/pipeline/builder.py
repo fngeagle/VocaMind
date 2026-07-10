@@ -37,6 +37,7 @@ def build_pipeline(config: PipelineConfig) -> ThreadManager:
         ctx.stop_event,
         ctx.task_queue,
         ctx.status_registry,
+        ctx.outbound_queue,
     )
 
     # 设置任务通知处理器

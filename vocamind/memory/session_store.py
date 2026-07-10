@@ -103,6 +103,10 @@ class DialogueSession:
         messages.append({"role": "user", "content": current_user_text})
         return messages
 
+    def user_turn_count(self) -> int:
+        """历史中的用户消息条数，与 WebSocket user_input_count 对齐。"""
+        return sum(1 for t in self.turns if t.get("role") == "user")
+
     def record_turn(self, user_text: str, assistant_text: str) -> None:
         """记录一轮完整对话。"""
         user_text = user_text.strip()

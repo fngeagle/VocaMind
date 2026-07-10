@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from queue import Queue
 from threading import Event
 from typing import Any, Optional
 
@@ -18,6 +19,8 @@ class AgentContext:
     recovery: RecoveryState = field(default_factory=RecoveryState)
     max_tokens: int = 4096
     current_task_id: Optional[str] = None
+    uid: Optional[str] = None
+    user_input_count: int = 0
     round_count: int = 0
     web_search_count: int = 0
     compacted_now: bool = False
@@ -35,4 +38,5 @@ class AgentRuntime:
     stop_event: Event
     task_queue: AgentTaskQueue
     status_registry: StatusRegistry
+    outbound_queue: Optional[Queue] = None
     agent_lock: Event = field(default_factory=Event)  # 预留；非互斥锁，勿用于同步

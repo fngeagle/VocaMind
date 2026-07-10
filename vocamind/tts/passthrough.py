@@ -26,6 +26,12 @@ class PassthroughTTSHandler(BaseHandler):
         self.pending_attachments = pending_attachments
 
     def process(self, inputs: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
+        from vocamind.common.tool_events import is_tool_event
+
+        if is_tool_event(inputs):
+            yield inputs
+            return
+
         llm_sentence = inputs["answer_text"]
         end_flag = inputs["end_flag"]
         uid = inputs.get("uid")

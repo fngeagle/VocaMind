@@ -7,6 +7,7 @@ from typing import Any, Iterator
 
 from vocamind.agent.state import AgentRuntime
 from vocamind.common.config import PipelineConfig
+from vocamind.common.tool_events import build_tool_end, build_tool_start
 from vocamind.common.conversation_log import build_voice_record, now_iso, save_voice_turn
 from vocamind.memory.session_store import DialogueSession
 from vocamind.llm.stream_conditions import should_abort_stream
@@ -54,17 +55,6 @@ def call_voice_llm(
         max_tokens=config.max_new_tokens,
         temperature=config.temperature,
     )
-
-
-def execute_voice_tool(
-    tool_call: Any,
-    handlers: dict[str, Any],
-) -> dict[str, Any]:
-    name = tool_call.function.name
-    args = parse_tool_arguments(tool_call.function.arguments)
-    handler = handlers.get(name)
-    output = call_tool_handler(handler, args, name)
-    return {"role": "tool", "tool_call_id": tool_call.id, "content": str(output)}
 
 
 def append_voice_assistant(messages: list[dict[str, Any]], assistant_message: Any) -> None:
@@ -240,7 +230,38 @@ def _run_voice_turn_body(
                 state.interrupted = True
                 yield yield_turn_end(state)
                 return
-            state.messages.append(execute_voice_tool(tc, handlers))
+            name = tc.function.name
+            args = parse_tool_arguments(tc.function.arguments)
+            yield build_tool_start(
+                tool_call_id=tc.id,
+                tool_name=name,
+                arguments=args,
+                scope="voice",
+                uid=state.uid,
+                user_input_count=state.user_input_count,
+                proactive=state.proactive,
+            )
+            try:
+                handler = handlers.get(name)
+                output = call_tool_handler(handler, args, name)
+                status = "success"
+            except Exception as exc:
+                logger.exception("Voice 工具 %s 执行失败", name)
+                output = str(exc)
+                status = "error"
+            yield build_tool_end(
+                tool_call_id=tc.id,
+                tool_name=name,
+                status=status,
+                content=str(output),
+                scope="voice",
+                uid=state.uid,
+                user_input_count=state.user_input_count,
+                proactive=state.proactive,
+            )
+            state.messages.append(
+                {"role": "tool", "tool_call_id": tc.id, "content": str(output)}
+            )
         state.tool_round += 1
 
 

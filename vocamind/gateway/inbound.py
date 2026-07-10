@@ -95,6 +95,11 @@ class InboundRouter:
             if uid:
                 session.bind_uid(uid)
 
+            msg_type = json_data.get("type")
+            if msg_type == "sync_history":
+                await self._handle_sync_history(ws, session, uid)
+                continue
+
             is_playing = json_data.get("is_playing", "placeholder")
             if is_playing in ("true", "false"):
                 session.frontend_is_playing = is_playing == "true"
@@ -105,6 +110,63 @@ class InboundRouter:
             elif json_data.get("audio") is not None:
                 logger.warning("已忽略 audio 消息：ASR 已移至客户端，请发送 text")
                 await ws.send(json.dumps({"placeholder": ""}))
+
+    async def _handle_sync_history(
+        self,
+        ws: websockets.WebSocketServerProtocol,
+        session: ClientSession,
+        uid: Optional[str],
+    ) -> None:
+        """客户端重连后拉取后端持久化的对话历史。"""
+        try:
+            if not uid:
+                await ws.send(
+                    json.dumps(
+                        {
+                            "type": "history_sync",
+                            "uid": None,
+                            "turns": [],
+                            "user_input_count": 0,
+                        }
+                    )
+                )
+                return
+
+            session.bind_uid(uid)
+            dialogue = get_dialogue_session(uid)
+            user_count = dialogue.user_turn_count()
+            session.user_input_count = user_count
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "history_sync",
+                        "uid": uid,
+                        "turns": dialogue.turns,
+                        "user_input_count": user_count,
+                        "has_summary": bool(dialogue.summary.strip()),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            logger.info(
+                "已同步对话历史 uid=%s turns=%d user_input_count=%d",
+                uid,
+                len(dialogue.turns),
+                user_count,
+            )
+        except Exception:
+            logger.exception("历史同步失败 uid=%s", uid)
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "history_sync",
+                        "uid": uid,
+                        "turns": [],
+                        "user_input_count": 0,
+                        "error": "sync_failed",
+                    }
+                )
+            )
 
     async def _handle_text(
         self,

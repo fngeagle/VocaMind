@@ -52,5 +52,12 @@ def test_dialogue_session_compact(tmp_path: Path):
     summarizer.assert_called()
 
 
+def test_dialogue_session_user_turn_count(tmp_path: Path):
+    session = get_dialogue_session("u5", tmp_path / "sessions")
+    session.record_turn("你好", "你好呀")
+    session.record_turn("再问一句", "好的")
+    assert session.user_turn_count() == 2
+
+
 def test_format_core_memory_block_empty():
     assert format_core_memory_block([]) == ""
