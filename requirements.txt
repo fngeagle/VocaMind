@@ -6,4 +6,5 @@ onnxruntime
 websockets
 openai>=1.0
 requests
+ddgs>=6.0
 python-dotenv

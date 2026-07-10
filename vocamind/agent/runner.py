@@ -26,6 +26,7 @@ from vocamind.agent.steps import (
     inject_cron_messages,
     setup_agent_tools,
 )
+from vocamind.agent.voice_summary import build_voice_delivery_summary
 from vocamind.common.config import PipelineConfig
 from vocamind.common.conversation_log import build_agent_record, now_iso, save_agent_task
 from vocamind.llm.tool_client import ToolCallingClient, has_tool_calls, message_text
@@ -56,6 +57,7 @@ def _finalize_task(
     task_msg: AgentTaskMessage,
     ctx: AgentContext,
     summary: str,
+    attachments: list[dict[str, str]] | None = None,
 ) -> None:
     """根据 Agent 实际执行结果更新任务状态并通知 Voice。"""
     from vocamind.tasks.store import get_task_store
@@ -63,12 +65,16 @@ def _finalize_task(
     failed = ctx.failed or _is_failure_summary(summary)
     if failed:
         fail_task(task_msg.task_id, summary)
-        runtime.task_queue.notify_complete(task_msg.task_id, summary, status="failed")
+        runtime.task_queue.notify_complete(
+            task_msg.task_id, summary, status="failed", attachments=attachments
+        )
         logger.warning("任务 %s 执行失败: %s", task_msg.task_id, summary[:120])
         return
 
     if ctx.completed_by_tool:
-        runtime.task_queue.notify_complete(task_msg.task_id, summary, status="completed")
+        runtime.task_queue.notify_complete(
+            task_msg.task_id, summary, status="completed", attachments=attachments
+        )
         return
 
     try:
@@ -77,7 +83,9 @@ def _finalize_task(
             complete_task(task_msg.task_id)
     except FileNotFoundError:
         pass
-    runtime.task_queue.notify_complete(task_msg.task_id, summary, status="completed")
+    runtime.task_queue.notify_complete(
+        task_msg.task_id, summary, status="completed", attachments=attachments
+    )
 
 
 def _sync_status(runtime: AgentRuntime, ctx: AgentContext | None = None) -> None:
@@ -151,7 +159,20 @@ def agent_loop_for_task(
         if results:
             ctx.messages.extend(results)
 
-    summary = extract_final_summary(ctx.messages)
+    from pathlib import Path
+
+    from vocamind.tasks.artifacts import collect_task_artifacts, get_artifact_registry
+    from vocamind.tools import builtin
+
+    workdir = Path(config.agent_workdir) if config.agent_workdir else builtin.WORKDIR
+    summary = build_voice_delivery_summary(ctx.messages, workdir=workdir)
+    record_summary = extract_final_summary(ctx.messages)
+    artifacts = collect_task_artifacts(
+        ctx.messages, task_id=task_msg.task_id, workdir=workdir
+    )
+    attachment_dicts = [a.to_dict() for a in artifacts]
+    if attachment_dicts:
+        get_artifact_registry().register(task_msg.task_id, artifacts)
     try:
         save_agent_task(
             build_agent_record(
@@ -162,7 +183,7 @@ def agent_loop_for_task(
                 uid=task_msg.uid,
                 user_input_count=task_msg.user_input_count,
                 messages=ctx.messages,
-                summary=summary,
+                summary=record_summary,
                 system_prompt=config.agent_system_prompt,
                 started_at=started_at,
                 round_count=ctx.round_count,
@@ -171,7 +192,7 @@ def agent_loop_for_task(
         )
     except Exception:
         logger.exception("保存 Agent 对话上下文失败")
-    _finalize_task(runtime, task_msg, ctx, summary)
+    _finalize_task(runtime, task_msg, ctx, summary, attachment_dicts or None)
     runtime.status_registry.update_agent(idle=True, current_task_id=None, round_count=ctx.round_count)
     _sync_status(runtime)
     return summary
@@ -207,6 +228,7 @@ def run_agent_daemon(runtime: AgentRuntime, config: PipelineConfig) -> None:
         else:
             continue
 
+        # agent_lock：预留 busy/idle 翻转；status_registry 为对外可观测的 idle 真相源
         runtime.agent_lock.clear()
         try:
             logger.info("Agent 开始处理任务 %s: %s", task_msg.task_id, task_msg.subject)

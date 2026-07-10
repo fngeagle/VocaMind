@@ -131,6 +131,103 @@
       background: #dc2626;
     }
     .hint { font-size: 0.75rem; color: #6b7280; }
+    .artifact-card { padding: 0; background: transparent; }
+    .artifact-btn {
+      background: #1e3a5f;
+      color: #93c5fd;
+      border: 1px solid #2563eb;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 0.9rem;
+      cursor: pointer;
+      width: 100%;
+      text-align: left;
+    }
+    .artifact-btn:hover { background: #1e40af; }
+    .doc-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .doc-modal.hidden { display: none; }
+    .doc-modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+    }
+    .doc-modal-panel {
+      position: relative;
+      width: min(860px, 94vw);
+      max-height: 88vh;
+      background: #1a1d27;
+      border: 1px solid #2a2f3a;
+      border-radius: 12px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .doc-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 1px solid #2a2f3a;
+    }
+    .doc-modal-header h2 { font-size: 1rem; font-weight: 600; }
+    #docModalClose {
+      background: transparent;
+      color: #9aa0a6;
+      font-size: 1.5rem;
+      padding: 0 8px;
+      line-height: 1;
+    }
+    .doc-modal-body {
+      padding: 16px 20px;
+      overflow-y: auto;
+      line-height: 1.65;
+    }
+    .doc-modal-body h1, .doc-modal-body h2, .doc-modal-body h3 { margin: 1em 0 0.5em; }
+    .doc-modal-body p, .doc-modal-body ul, .doc-modal-body ol { margin: 0.5em 0; }
+    .doc-modal-body code {
+      background: #0f1117;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+    .doc-modal-body pre {
+      background: #0f1117;
+      padding: 12px;
+      border-radius: 8px;
+      overflow-x: auto;
+    }
+    .doc-modal-body hr {
+      border: none;
+      border-top: 1px solid #3a3f4a;
+      margin: 1.2em 0;
+    }
+    .doc-modal-body .md-table-wrap {
+      overflow-x: auto;
+      margin: 0.75em 0;
+    }
+    .doc-modal-body table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    .doc-modal-body th,
+    .doc-modal-body td {
+      border: 1px solid #3a3f4a;
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .doc-modal-body th {
+      background: #0f1117;
+      font-weight: 600;
+    }
   </style>
 </head>
 <body>
@@ -171,6 +268,11 @@
     import { PcmFrameBuffer, resampleTo16k } from "./js/audio_resample.js";
     import { ClientVAD } from "./js/client_vad.js";
     import { transcribeAudio, DEFAULT_ASR_URL, DEFAULT_ASR_MODEL } from "./js/client_asr.js";
+    import {
+      artifactBaseUrlFromWs,
+      appendAttachmentCards,
+      openArtifactModal,
+    } from "./js/artifacts.js";
 
     const SAMPLE_RATE = 16000;
     const ASR_KEY_STORAGE = "vocamind_asr_api_key";
@@ -237,10 +339,17 @@
       }
     }
 
+    function resetTurnState() {
+      userInputCount = 0;
+      busy = false;
+      finishAssistantBubble();
+      lastUserEl = null;
+      stopPlayback();
+    }
+
     async function onSpeechSegment(segment) {
       if (!connection?.isOpen || busy) return;
 
-      userInputCount += 1;
       busy = true;
       sendBtn.disabled = true;
       finishAssistantBubble();
@@ -258,6 +367,7 @@
         if (lastUserEl) {
           lastUserEl.textContent = text;
         }
+        userInputCount += 1;
         connection.send({ uid, text, audio_input: true });
       } catch (err) {
         busy = false;
@@ -279,10 +389,13 @@
         }
         return;
       }
-      if (
-        data.placeholder !== undefined ||
-        (data.answer_text === undefined && data.answer_audio === undefined && !data.end_flag)
-      ) {
+      const hasPayload =
+        data.question_text ||
+        data.answer_text ||
+        data.answer_audio ||
+        data.attachments?.length ||
+        data.end_flag;
+      if (data.placeholder !== undefined || !hasPayload) {
         return;
       }
       handleOutbound(data);
@@ -432,9 +545,8 @@
 
     function onConnectionStateChange(state) {
       if (state === VoiceConnection.State.CONNECTED) {
-        if (!busy) {
-          setStatus(micOn ? "麦克风已开" : "已连接", "ok");
-        }
+        resetTurnState();
+        setStatus(micOn ? "麦克风已开" : "已连接", "ok");
         sendBtn.disabled = false;
         micBtn.disabled = false;
         connectBtn.textContent = "已连接";
@@ -467,9 +579,30 @@
       }
     }
 
+    function getArtifactBaseUrl() {
+      return artifactBaseUrlFromWs($("wsUrl").value.trim() || "ws://localhost:9001");
+    }
+
+    function handleAttachments(attachments) {
+      if (!attachments?.length) return;
+      appendAttachmentCards(chat, attachments, {
+        baseUrl: getArtifactBaseUrl(),
+        onOpen: (att) => openArtifactModal(att, getArtifactBaseUrl()),
+      });
+    }
+
     function handleOutbound(data) {
       if (data.uid !== uid) return;
-      if (!data.proactive && data.user_input_count !== userInputCount) return;
+      if (!data.proactive && data.user_input_count !== userInputCount) {
+        console.warn(
+          "丢弃出站消息: count 不匹配",
+          "server=",
+          data.user_input_count,
+          "client=",
+          userInputCount,
+        );
+        return;
+      }
 
       if (data.proactive && !busy) {
         busy = true;
@@ -494,6 +627,9 @@
       if (data.answer_audio && data.answer_audio !== "" && data.answer_audio !== 0) {
         enqueueAudio(data.answer_audio);
       }
+      if (data.attachments?.length) {
+        handleAttachments(data.attachments);
+      }
       if (data.end_flag) {
         finishTurn();
       }
@@ -504,6 +640,7 @@
       if (connection) {
         connection.disconnect();
       }
+      resetTurnState();
       connection = new VoiceConnection({
         url,
         onStateChange: onConnectionStateChange,
@@ -520,13 +657,17 @@
         setStatus("请先连接", "err");
         return;
       }
+      if (busy) {
+        setStatus("请等待上一条回复", "err");
+        return;
+      }
 
       await audioCtx.resume();
       stopPlayback();
 
       userInputCount += 1;
       busy = true;
-      sendBtn.disabled = false;
+      sendBtn.disabled = true;
       finishAssistantBubble();
       lastUserEl = appendMsg("user", text);
       inputEl.value = "";

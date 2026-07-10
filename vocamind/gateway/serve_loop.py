@@ -14,12 +14,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
+# 运行服务周期
 async def run_serve_cycle(gateway: WebSocketGateway) -> None:
     """一次服务周期：绑定端口、启动出站分发、等待停止信号。"""
+    # 出站分发任务
     dispatcher_task: Optional[asyncio.Task] = None
     try:
+        # 连接会话生命周期信号
         gateway.session_lifecycle.signal_connect()
+        # 绑定端口
         gateway.server = await websockets.serve(
             gateway._handle_connection,
             gateway.host,
@@ -27,9 +30,12 @@ async def run_serve_cycle(gateway: WebSocketGateway) -> None:
             ping_interval=None,
             ping_timeout=None,
         )
+        # 创建出站分发任务
         dispatcher_task = asyncio.create_task(gateway._outbound.run())
         logger.info("WebSocket 服务启动于 %s:%s", gateway.host, gateway.port)
+        # 循环直到停止事件触发
         while should_continue_gateway(gateway.stop_event):
+            # 等待 0.2 秒
             await asyncio.sleep(0.2)
     except OSError as exc:
         if should_retry_after_bind_error(exc):

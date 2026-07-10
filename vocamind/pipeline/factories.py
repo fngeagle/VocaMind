@@ -38,6 +38,7 @@ def create_tts(ctx: PipelineContext, config: PipelineConfig) -> BaseHandler:
             queue_in=ctx.lm_response_queue,
             queue_out=ctx.outbound_queue,
             should_listen=ctx.should_listen,
+            pending_attachments=ctx.pending_attachments,
         )
     if config.tts_backend != TTSBackend.API:
         raise ValueError(f"不支持的 TTS 后端: {config.tts_backend}")
@@ -49,6 +50,7 @@ def create_tts(ctx: PipelineContext, config: PipelineConfig) -> BaseHandler:
         should_listen=ctx.should_listen,
         interruption_event=ctx.interruption_event,
         config=config,
+        pending_attachments=ctx.pending_attachments,
     )
 
 

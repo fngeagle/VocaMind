@@ -15,6 +15,7 @@ import requests
 from vocamind.common.config import PipelineConfig
 from vocamind.common.audio import float_to_int16, load_mp3, resample
 from vocamind.common.timing import log_elapsed
+from vocamind.pipeline.attachments import take_pending_attachments, with_attachments
 from vocamind.tts.base import TTSHandlerBase
 from vocamind.tts.voice_profile import VoiceProfileService
 
@@ -44,9 +45,11 @@ class APITTSHandler(TTSHandlerBase):
         should_listen: Event,
         interruption_event: Event,
         config: PipelineConfig,
+        pending_attachments: dict[str, list[dict[str, str]]] | None = None,
     ) -> None:
         super().__init__(stop_event, cur_conn_end_event, queue_in, queue_out, should_listen, interruption_event)
         self.config = config
+        self.pending_attachments = pending_attachments
         self.api_key = os.getenv(config.tts_api_key_env)
         if not self.api_key:
             raise ValueError(f"环境变量 {config.tts_api_key_env} 未设置")
@@ -124,15 +127,19 @@ class APITTSHandler(TTSHandlerBase):
         question_text = inputs.get("question_text")
 
         if not llm_sentence and end_flag:
-            yield {
-                "question_text": None,
-                "answer_text": "",
-                "answer_audio": "",
-                "end_flag": True,
-                "user_input_count": user_input_count,
-                "uid": uid,
-                "proactive": inputs.get("proactive", False),
-            }
+            attachments = take_pending_attachments(self.pending_attachments or {}, uid)
+            yield with_attachments(
+                {
+                    "question_text": None,
+                    "answer_text": "",
+                    "answer_audio": "",
+                    "end_flag": True,
+                    "user_input_count": user_input_count,
+                    "uid": uid,
+                    "proactive": inputs.get("proactive", False),
+                },
+                attachments,
+            )
             self.should_listen.set()
             return
 
@@ -155,13 +162,17 @@ class APITTSHandler(TTSHandlerBase):
             return
 
         audio = self.synthesize(llm_sentence, uid)
-        yield {
-            "question_text": None,
-            "answer_text": "",
-            "answer_audio": audio if audio is not None else "",
-            "end_flag": end_flag,
-            "user_input_count": user_input_count,
-            "uid": uid,
-            "proactive": inputs.get("proactive", False),
-        }
+        attachments = take_pending_attachments(self.pending_attachments or {}, uid) if end_flag else None
+        yield with_attachments(
+            {
+                "question_text": None,
+                "answer_text": "",
+                "answer_audio": audio if audio is not None else "",
+                "end_flag": end_flag,
+                "user_input_count": user_input_count,
+                "uid": uid,
+                "proactive": inputs.get("proactive", False),
+            },
+            attachments,
+        )
         self.should_listen.set()

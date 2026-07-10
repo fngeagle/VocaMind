@@ -37,6 +37,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="VocaMind 轻量语音对话管道")
     parser.add_argument("--ws-host", default="0.0.0.0", help="WebSocket 监听地址")
     parser.add_argument("--ws-port", type=int, default=9001, help="WebSocket 监听端口")
+    parser.add_argument("--http-host", default="0.0.0.0", help="文档 HTTP 监听地址")
+    parser.add_argument("--http-port", type=int, default=9002, help="文档 HTTP 监听端口")
     parser.add_argument("--reply-mode", choices=["audio", "text"], default="audio", help="助手回复形式")
     parser.add_argument("--enable-interruption", action="store_true", default=True)
     parser.add_argument("--no-interruption", action="store_true", help="禁用用户打断")
@@ -59,10 +61,13 @@ def main() -> None:
     args = parser.parse_args()
 
     ensure_port_available(args.ws_host, args.ws_port)
+    ensure_port_available(args.http_host, args.http_port)
 
     config = PipelineConfig(
         ws_host=args.ws_host,
         ws_port=args.ws_port,
+        http_host=args.http_host,
+        http_port=args.http_port,
         reply_mode=ReplyMode(args.reply_mode),
         enable_interruption=not args.no_interruption,
         llm_model=args.llm_model,

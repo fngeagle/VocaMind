@@ -4,6 +4,12 @@ from __future__ import annotations
 # 面向用户的口语化能力分组，与 tools/* 能力对齐
 AGENT_CAPABILITY_GROUPS: list[tuple[str, list[str]]] = [
     (
+        "信息检索",
+        [
+            "搜索互联网获取最新资讯（标题、链接、摘要）",
+        ],
+    ),
+    (
         "文件与命令",
         [
             "运行 shell 命令（安装依赖、构建、测试、脚本等）",

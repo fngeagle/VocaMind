@@ -91,6 +91,23 @@ def execute_tool_batch(
             results.append({"role": "tool", "tool_call_id": tc.id, "content": str(blocked)})
             continue
 
+        if name == "web_search":
+            from vocamind.agent.conditions import MAX_WEB_SEARCH_PER_TASK
+
+            if ctx.web_search_count >= MAX_WEB_SEARCH_PER_TASK:
+                results.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": (
+                            f"Error: web_search 已达本任务上限 ({MAX_WEB_SEARCH_PER_TASK} 次)。"
+                            "请基于已有搜索结果继续完成，不要再调用 web_search。"
+                        ),
+                    }
+                )
+                continue
+            ctx.web_search_count += 1
+
         from vocamind.agent.conditions import should_run_background_tool
         from vocamind.tools.background import start_background_task
 

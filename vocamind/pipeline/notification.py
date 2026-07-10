@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 
+from vocamind.pipeline.attachments import take_pending_attachments
 from vocamind.pipeline.interruption import trigger_interruption
 from vocamind.pipeline.state import PipelineContext
 from vocamind.tasks.queue import TaskNotification, format_notification_line
@@ -20,6 +21,18 @@ def forward_task_notification(ctx: PipelineContext, note: TaskNotification) -> N
     if ctx.assistant_turn_active.is_set():
         trigger_interruption(ctx)
         ctx.outbound_queue.put({"stop_playback": True, "uid": note.uid})
+
+    if note.attachments:
+        ctx.pending_attachments[note.uid] = list(note.attachments)
+        ctx.outbound_queue.put(
+            {
+                "uid": note.uid,
+                "user_input_count": note.user_input_count,
+                "proactive": True,
+                "attachments": note.attachments,
+                "end_flag": False,
+            }
+        )
 
     ctx.text_prompt_queue.put(
         {

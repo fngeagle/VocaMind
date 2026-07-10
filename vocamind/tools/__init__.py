@@ -9,6 +9,7 @@ from vocamind.tools.background import should_run_background, start_background_ta
 from vocamind.tools.cron import run_cancel_cron, run_list_crons, run_schedule_cron
 from vocamind.tools.hooks import call_tool_handler
 from vocamind.tools.todo import run_todo_write
+from vocamind.tools.web_search import run_web_search
 
 BUILTIN_TOOLS: list[dict[str, Any]] = [
     {"name": "bash", "description": "Run a shell command.",
@@ -21,6 +22,17 @@ BUILTIN_TOOLS: list[dict[str, Any]] = [
      "input_schema": {"type": "object", "properties": {"path": {"type": "string"}, "old_text": {"type": "string"}, "new_text": {"type": "string"}}, "required": ["path", "old_text", "new_text"]}},
     {"name": "glob", "description": "Find files matching a glob pattern.",
      "input_schema": {"type": "object", "properties": {"pattern": {"type": "string"}}, "required": ["pattern"]}},
+    {"name": "web_search", "description": (
+        "Search the web for current information (news, docs, facts). "
+        "Use when the user asks about recent events or information beyond model knowledge. "
+        "Each task is limited to 10 searches; prefer broad queries and reuse prior results. "
+        "Default engine is DuckDuckGo (no API key); set TAVILY_API_KEY for Tavily."
+    ),
+     "input_schema": {"type": "object", "properties": {
+         "query": {"type": "string", "description": "Search query"},
+         "max_results": {"type": "integer", "description": "Number of results (1-10)", "default": 5},
+         "backend": {"type": "string", "enum": ["auto", "duckduckgo", "tavily"], "default": "auto"},
+     }, "required": ["query"]}},
     {"name": "todo_write", "description": "Create and manage a task list for the current session.",
      "input_schema": {"type": "object", "properties": {"todos": {"type": "array", "items": {"type": "object", "properties": {"content": {"type": "string"}, "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]}}, "required": ["content", "status"]}}}, "required": ["todos"]}},
     {"name": "compact", "description": "Summarize earlier conversation and continue with compacted context.",
@@ -104,6 +116,7 @@ def assemble_tool_pool(
         "write_file": builtin.run_write,
         "edit_file": builtin.run_edit,
         "glob": builtin.run_glob,
+        "web_search": run_web_search,
         "todo_write": run_todo_write,
         "create_task": _run_create_task,
         "list_tasks": _run_list_tasks,

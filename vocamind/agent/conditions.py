@@ -6,12 +6,11 @@ from threading import Event
 from vocamind.agent.state import AgentContext
 from vocamind.llm.tool_client import RecoveryState, has_tool_calls, is_prompt_too_long_error
 
-
 CONTINUATION_PROMPT = "Continue from the previous response. Do not repeat completed work."
 DEFAULT_MAX_TOKENS = 4096
 ESCALATED_MAX_TOKENS = 8192
 MAX_RECOVERY_RETRIES = 2
-
+MAX_WEB_SEARCH_PER_TASK = 10
 
 def should_stop_agent(stop_event: Event) -> bool:
     return stop_event.is_set()

@@ -32,5 +32,6 @@ def start_agent_runtime(runtime: AgentRuntime, config: PipelineConfig) -> thread
         name="agent-daemon",
     )
     thread.start()
+    # 预留信号：Daemon 线程已 launch，视为空闲；对外查询 idle 仍以 status_registry 为准
     runtime.agent_lock.set()
     return thread

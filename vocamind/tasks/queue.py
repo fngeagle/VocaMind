@@ -26,6 +26,7 @@ class TaskNotification:
     status: str = "completed"
     user_input_count: int = 0
     uid: Optional[str] = None
+    attachments: list[dict[str, str]] | None = None
 
 
 def format_notification_line(note: TaskNotification) -> str:
@@ -78,7 +79,13 @@ class AgentTaskQueue:
         with self._lock:
             return self._pending_count
 
-    def notify_complete(self, task_id: str, summary: str, status: str = "completed") -> None:
+    def notify_complete(
+        self,
+        task_id: str,
+        summary: str,
+        status: str = "completed",
+        attachments: list[dict[str, str]] | None = None,
+    ) -> None:
         user_input_count, uid = self._task_context.pop(task_id, (0, None))
         note = TaskNotification(
             task_id=task_id,
@@ -86,6 +93,7 @@ class AgentTaskQueue:
             status=status,
             user_input_count=user_input_count,
             uid=uid,
+            attachments=attachments or None,
         )
         if self._on_notification:
             self._on_notification(note)

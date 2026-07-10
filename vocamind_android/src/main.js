@@ -4,6 +4,11 @@ import { requestMicStream } from "./js/mic_session.js";
 import { PcmFrameBuffer, resampleTo16k } from "./js/audio_resample.js";
 import { ClientVAD } from "./js/client_vad.js";
 import { transcribeAudio, DEFAULT_ASR_URL, DEFAULT_ASR_MODEL } from "./js/client_asr.js";
+import {
+  artifactBaseUrlFromWs,
+  appendAttachmentCards,
+  openArtifactModal,
+} from "./js/artifacts.js";
 
 const SAMPLE_RATE = 16000;
 const ASR_KEY_STORAGE = "vocamind_asr_api_key";
@@ -70,10 +75,17 @@ function onSpeechStart() {
   }
 }
 
+function resetTurnState() {
+  userInputCount = 0;
+  busy = false;
+  finishAssistantBubble();
+  lastUserEl = null;
+  stopPlayback();
+}
+
 async function onSpeechSegment(segment) {
   if (!connection?.isOpen || busy) return;
 
-  userInputCount += 1;
   busy = true;
   sendBtn.disabled = true;
   finishAssistantBubble();
@@ -91,6 +103,7 @@ async function onSpeechSegment(segment) {
     if (lastUserEl) {
       lastUserEl.textContent = text;
     }
+    userInputCount += 1;
     connection.send({ uid, text, audio_input: true });
   } catch (err) {
     busy = false;
@@ -112,10 +125,13 @@ function handleSocketMessage(data) {
     }
     return;
   }
-  if (
-    data.placeholder !== undefined ||
-    (data.answer_text === undefined && data.answer_audio === undefined && !data.end_flag)
-  ) {
+  const hasPayload =
+    data.question_text ||
+    data.answer_text ||
+    data.answer_audio ||
+    data.attachments?.length ||
+    data.end_flag;
+  if (data.placeholder !== undefined || !hasPayload) {
     return;
   }
   handleOutbound(data);
@@ -262,9 +278,8 @@ function playNextAudio() {
 
 function onConnectionStateChange(state) {
   if (state === VoiceConnection.State.CONNECTED) {
-    if (!busy) {
-      setStatus(micOn ? "麦克风已开" : "已连接", "ok");
-    }
+    resetTurnState();
+    setStatus(micOn ? "麦克风已开" : "已连接", "ok");
     sendBtn.disabled = false;
     micBtn.disabled = false;
     connectBtn.textContent = "已连接";
@@ -297,9 +312,29 @@ function finishTurn() {
   }
 }
 
+function getArtifactBaseUrl() {
+  return artifactBaseUrlFromWs($("wsUrl").value.trim() || defaultWsUrl());
+}
+
+function handleAttachments(attachments) {
+  if (!attachments?.length) return;
+  appendAttachmentCards(chat, attachments, {
+    onOpen: (att) => openArtifactModal(att, getArtifactBaseUrl()),
+  });
+}
+
 function handleOutbound(data) {
   if (data.uid !== uid) return;
-  if (!data.proactive && data.user_input_count !== userInputCount) return;
+  if (!data.proactive && data.user_input_count !== userInputCount) {
+    console.warn(
+      "丢弃出站消息: count 不匹配",
+      "server=",
+      data.user_input_count,
+      "client=",
+      userInputCount,
+    );
+    return;
+  }
 
   if (data.proactive && !busy) {
     busy = true;
@@ -324,6 +359,9 @@ function handleOutbound(data) {
   if (data.answer_audio && data.answer_audio !== "" && data.answer_audio !== 0) {
     enqueueAudio(data.answer_audio);
   }
+  if (data.attachments?.length) {
+    handleAttachments(data.attachments);
+  }
   if (data.end_flag) {
     finishTurn();
   }
@@ -334,6 +372,7 @@ function connect() {
   if (connection) {
     connection.disconnect();
   }
+  resetTurnState();
   connection = new VoiceConnection({
     url,
     onStateChange: onConnectionStateChange,
@@ -350,13 +389,17 @@ async function sendText() {
     setStatus("请先连接", "err");
     return;
   }
+  if (busy) {
+    setStatus("请等待上一条回复", "err");
+    return;
+  }
 
   await audioCtx.resume();
   stopPlayback();
 
   userInputCount += 1;
   busy = true;
-  sendBtn.disabled = false;
+  sendBtn.disabled = true;
   finishAssistantBubble();
   lastUserEl = appendMsg("user", text);
   inputEl.value = "";

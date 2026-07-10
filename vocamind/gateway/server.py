@@ -48,6 +48,7 @@ class WebSocketGateway:
         self._active_gen = 0
         self._ws_lock = asyncio.Lock()
 
+        # 创建入站路由器
         self._inbound = InboundRouter(
             text_prompt_queue,
             session_lifecycle,
@@ -56,6 +57,7 @@ class WebSocketGateway:
             lm_response_queue,
             outbound_queue,
         )
+        # 创建出站分发器
         self._outbound = OutboundDispatcher(
             outbound_queue,
             stop_event,
@@ -128,13 +130,18 @@ class WebSocketGateway:
                 logger.info("WebSocket 会话结束（已被新连接取代）")
 
     async def _serve_loop(self) -> None:
+        # 循环直到停止事件触发
         while should_continue_gateway(self.stop_event):
+            # 运行服务循环
             await run_serve_cycle(self)
 
     def start(self) -> None:
+        # 创建事件循环
         loop = asyncio.new_event_loop()
+        # 绑定事件循环到当前线程
         asyncio.set_event_loop(loop)
         try:
+            # 运行服务循环
             loop.run_until_complete(self._serve_loop())
         except KeyboardInterrupt:
             logger.info("WebSocket 网关被用户中断")

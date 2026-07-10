@@ -25,6 +25,8 @@ class PipelineConfig:
     # WebSocket（单端口双向）
     ws_host: str = "0.0.0.0"
     ws_port: int = 9001
+    http_host: str = "0.0.0.0"
+    http_port: int = 9002
     enable_interruption: bool = True
 
     # 回复模式
@@ -55,7 +57,12 @@ class PipelineConfig:
     agent_llm_api_url: Optional[str] = None
     agent_llm_api_key_env: str = "AGENT_LLM_API_KEY"
     agent_system_prompt: str = (
-        "你是后台执行 Agent。根据任务描述完成工作，使用可用工具，"
+        "你是后台执行 Agent。根据任务描述完成工作，使用可用工具。"
+        "任务结束前必须给出可播报的事实摘要：包含关键结论、数据或发现，"
+        "禁止只说「以上即为完整结果」「任务已完成」等空话。"
+        "若用 write_file 写入了文档，请保存为 .md 格式，"
+        "最终回复里也要概括文档要点；用户可在界面点击查看完整文档。"
+        "web_search 每个任务最多 10 次，应合并关键词、复用已有结果，避免重复细搜。"
         "完成后调用 complete_task 标记任务完成。"
     )
     agent_max_tokens: int = 4096

@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from queue import Queue
 from threading import Event
-from typing import Optional
+from typing import Any, Optional
 
 from vocamind.agent.state import AgentRuntime
 from vocamind.status import StatusRegistry
@@ -46,26 +46,41 @@ class SessionLifecycle:
 
 @dataclass
 class PipelineContext:
-    """封装管道中跨节点共享的状态与队列。"""
+    """
+    封装管道中跨节点共享的状态与队列。
 
-    stop_event: Event
-    should_listen: Event
-    interruption_event: Event
-    assistant_turn_active: Event
-    session: SessionLifecycle
-    text_prompt_queue: Queue
-    lm_response_queue: Queue
-    outbound_queue: Queue
-    task_queue: AgentTaskQueue = field(default_factory=AgentTaskQueue)
-    status_registry: StatusRegistry = field(default_factory=StatusRegistry)
-    agent_runtime: Optional[AgentRuntime] = None
+    Gateway / Voice LLM / TTS / Agent 四个线程通过本对象传递消息、
+    协调打断与会话生命周期，由 build_pipeline() 创建并注入各节点。
+    """
+
+    # --- 生命周期与协调 ---
+    stop_event: Event  # 全局停止；置位后所有 Handler 退出主循环
+    should_listen: Event  # 是否允许 Gateway 接收用户输入；TTS 播报期间通常清除
+    interruption_event: Event  # 用户打断信号；置位后 LLM/TTS 停止当前轮次输出
+    assistant_turn_active: Event  # 助手正在回复；用于判断是否应触发打断
+    session: SessionLifecycle  # 连接断开/新话题时的 flush 信号
+
+    # --- 主数据流队列（Gateway → Voice → TTS → Gateway）---
+    text_prompt_queue: Queue  # 用户文本 / 任务通知 → Voice LLM
+    lm_response_queue: Queue  # LLM 流式回复 → TTS
+    outbound_queue: Queue  # TTS 音频或文本 → 推送给客户端
+
+    # uid → 任务完成时待随 Voice 结束一并下发的文档附件
+    pending_attachments: dict[str, list[dict[str, str]]] = field(default_factory=dict)
+
+    # --- Agent 后台 ---
+    task_queue: AgentTaskQueue = field(default_factory=AgentTaskQueue)  # Voice 派发的后台任务
+    status_registry: StatusRegistry = field(default_factory=StatusRegistry)  # 任务/工具执行状态
+    agent_runtime: Optional[AgentRuntime] = None  # Agent Daemon 运行时；build_pipeline 中初始化
 
     @property
     def cur_conn_end_event(self) -> Event:
+        """兼容 Handler 基类对 cur_conn_end_event 的引用，实际指向 session.flush。"""
         return self.session.cur_conn_end_event
 
     @classmethod
     def create(cls) -> PipelineContext:
+        """创建一份空的管道上下文，所有 Event 初始为未置位。"""
         return cls(
             stop_event=Event(),
             should_listen=Event(),
