@@ -1,4 +1,4 @@
-/** 后端 VAD 单帧采样点数（16kHz × 512 samples） */
+/** 后端 VAD 单帧采样点数（16kHz × 512 samples = 2048 bytes） */
 export const VAD_FRAME_SAMPLES = 512;
 
 const TARGET_RATE = 16000;

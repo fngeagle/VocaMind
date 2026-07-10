@@ -1,18 +1,18 @@
 """main.py CLI 与 pipeline wiring 测试。"""
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-from vocamind.common import ASRBackend, PipelineConfig, ReplyMode, TTSBackend
+from vocamind.common import PipelineConfig, ReplyMode, TTSBackend
 from vocamind.common.handler import ThreadManager
 from vocamind.common.protocols import PipelineNode
 from vocamind.pipeline import PipelineContext, build_pipeline
-from vocamind.pipeline.factories import create_gateway, create_stt, create_tts, create_voice_llm
+from vocamind.pipeline.factories import create_gateway, create_tts, create_voice_llm
 from vocamind.tts import PassthroughTTSHandler
 from vocamind.voice import VoiceOrchestratorHandler
 
 
 def test_pipeline_context_queues():
     ctx = PipelineContext.create()
-    assert ctx.spoken_prompt_queue is not ctx.text_prompt_queue
+    assert ctx.text_prompt_queue is not None
     assert ctx.session is not None
     assert ctx.task_queue is not None
     assert ctx.status_registry is not None
@@ -31,7 +31,6 @@ def test_create_tts_passthrough_for_text_mode():
 def test_build_pipeline_all_nodes_implement_protocol(mock_openai, mock_start_agent):
     config = PipelineConfig(
         reply_mode=ReplyMode.TEXT,
-        asr_backend=ASRBackend.API,
         tts_backend=TTSBackend.NONE,
     )
     manager = build_pipeline(config)
@@ -53,10 +52,8 @@ def test_factory_gateway_uses_context_queues(mock_openai):
         PipelineConfig(), ctx.stop_event, ctx.task_queue, ctx.status_registry
     )
     config = PipelineConfig()
-    with patch("vocamind.gateway.server.VADProcessor"):
-        gateway = create_gateway(ctx, config)
+    gateway = create_gateway(ctx, config)
     assert gateway.stop_event is ctx.stop_event
-    stt = create_stt(ctx, config)
-    assert stt.queue_in is ctx.spoken_prompt_queue
     voice = create_voice_llm(ctx, config)
     assert isinstance(voice, VoiceOrchestratorHandler)
+    assert voice.queue_in is ctx.text_prompt_queue

@@ -1,8 +1,7 @@
-"""WebSocket 入站消息路由：文本 / 音频 / VAD。"""
+"""WebSocket 入站消息路由：客户端完成 ASR 后发送文本。"""
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
 import time
@@ -15,7 +14,6 @@ import websockets
 from vocamind.gateway.session_signals import SessionSignals
 from vocamind.common.timing import log_elapsed
 from vocamind.gateway.session import ClientSession
-from vocamind.gateway.vad import VADProcessor
 from vocamind.memory import get_dialogue_session
 from vocamind.pipeline.interruption import trigger_interruption_queues
 
@@ -23,23 +21,19 @@ logger = logging.getLogger(__name__)
 
 
 class InboundRouter:
-    """解析客户端 JSON 消息并写入 prompt 队列。"""
+    """解析客户端 JSON 消息并写入 text_prompt 队列。"""
 
     def __init__(
         self,
-        prompt_queue: Queue,
-        should_listen: Event,
+        text_prompt_queue: Queue,
         session_lifecycle: SessionSignals,
-        vad: VADProcessor,
         assistant_turn_active: Event,
         interruption_event: Event,
         lm_response_queue: Queue,
         outbound_queue: Queue,
     ) -> None:
-        self.prompt_queue = prompt_queue
-        self.should_listen = should_listen
+        self.text_prompt_queue = text_prompt_queue
         self.session_lifecycle = session_lifecycle
-        self._vad = vad
         self.assistant_turn_active = assistant_turn_active
         self.interruption_event = interruption_event
         self.lm_response_queue = lm_response_queue
@@ -52,10 +46,6 @@ class InboundRouter:
         """用户新输入时打断当前助手轮次并清下游积压，返回是否触发了打断。"""
         if not self._should_interrupt(session):
             return False
-        self._vad.maybe_interrupt_user_input(
-            frontend_is_playing=session.frontend_is_playing,
-            assistant_turn_active=self.assistant_turn_active.is_set(),
-        )
         trigger_interruption_queues(
             self.interruption_event,
             self.lm_response_queue,
@@ -110,12 +100,11 @@ class InboundRouter:
                 session.frontend_is_playing = is_playing == "true"
 
             text = json_data.get("text")
-            audio = json_data.get("audio")
-
             if text is not None:
-                await self._handle_text(ws, session, uid, text)
-            elif audio is not None:
-                await self._handle_audio(ws, session, uid, audio)
+                await self._handle_text(ws, session, uid, text, json_data)
+            elif json_data.get("audio") is not None:
+                logger.warning("已忽略 audio 消息：ASR 已移至客户端，请发送 text")
+                await ws.send(json.dumps({"placeholder": ""}))
 
     async def _handle_text(
         self,
@@ -123,6 +112,7 @@ class InboundRouter:
         session: ClientSession,
         uid: Optional[str],
         text: str,
+        json_data: dict,
     ) -> None:
         total_start = time.perf_counter()
         if text == "new topic":
@@ -138,72 +128,20 @@ class InboundRouter:
             await self._send_stop_playback(ws, uid)
 
         session.user_input_count += 1
-        self.prompt_queue.put(
-            {"data": text, "user_input_count": session.user_input_count, "uid": uid}
+        self.text_prompt_queue.put(
+            {
+                "data": text,
+                "user_input_count": session.user_input_count,
+                "uid": uid,
+                "audio_input": bool(json_data.get("audio_input", False)),
+            }
         )
         await ws.send(json.dumps({"placeholder": ""}))
-        log_elapsed("WS入站 文本", total_start, uid=uid, count=session.user_input_count, text=text[:40])
-
-    async def _handle_audio(
-        self,
-        ws: websockets.WebSocketServerProtocol,
-        session: ClientSession,
-        uid: Optional[str],
-        audio_b64: str,
-    ) -> None:
-        total_start = time.perf_counter()
-        vad_detected = False
-        interrupted = False
-        decode_start = time.perf_counter()
-        audio_bytes = base64.b64decode(audio_b64)
-        chunk_size = self._vad.chunk_size
-        chunk_count = len(audio_bytes) // chunk_size
-        log_elapsed("WS入站 音频解码", decode_start, bytes=len(audio_bytes), chunks=chunk_count)
-
-        assistant_active = self.assistant_turn_active.is_set()
-        if self.should_listen.is_set():
-            for i in range(chunk_count):
-                chunk = audio_bytes[i * chunk_size : (i + 1) * chunk_size]
-                vad_start = time.perf_counter()
-                vad_result = await asyncio.to_thread(
-                    self._vad.process_chunk,
-                    chunk,
-                    session.frontend_is_playing,
-                    assistant_active,
-                )
-                if not interrupted and self._vad.last_speech_started and self.interruption_event.is_set():
-                    trigger_interruption_queues(
-                        self.interruption_event,
-                        self.lm_response_queue,
-                        self.outbound_queue,
-                    )
-                    await self._send_stop_playback(ws, uid)
-                    interrupted = True
-
-                if vad_result is not None:
-                    log_elapsed("WS入站 VAD命中", vad_start, chunk_index=i + 1, uid=uid)
-                    if not interrupted:
-                        interrupted = self._trigger_user_interruption(session)
-                        if interrupted:
-                            await self._send_stop_playback(ws, uid)
-                    session.user_input_count += 1
-                    self.prompt_queue.put(
-                        {
-                            "data": vad_result,
-                            "user_input_count": session.user_input_count,
-                            "uid": uid,
-                        }
-                    )
-                    await ws.send(json.dumps({"return_info": "VAD detected"}))
-                    vad_detected = True
-
-        if not vad_detected:
-            await ws.send(json.dumps({"placeholder": ""}))
-
         log_elapsed(
-            "WS入站 音频总计",
+            "WS入站 文本",
             total_start,
             uid=uid,
-            vad_hit=vad_detected,
-            chunks=chunk_count,
+            count=session.user_input_count,
+            text=text[:40],
+            audio_input=bool(json_data.get("audio_input", False)),
         )

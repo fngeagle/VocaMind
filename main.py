@@ -48,7 +48,6 @@ def main() -> None:
     parser.add_argument("--agent-llm-url", default=os.getenv("AGENT_LLM_API_URL"))
     parser.add_argument("--agent-tasks-dir", default=os.getenv("AGENT_TASKS_DIR"))
     parser.add_argument("--agent-workdir", default=os.getenv("AGENT_WORKDIR"))
-    parser.add_argument("--asr-model", default="FunAudioLLM/SenseVoiceSmall")
     parser.add_argument("--tts-model", default="FunAudioLLM/CosyVoice2-0.5B")
     parser.add_argument(
         "--ref-dir",
@@ -57,8 +56,6 @@ def main() -> None:
     )
     parser.add_argument("--system-prompt", default=None)
     parser.add_argument("--chat-size", type=int, default=5)
-    parser.add_argument("--vad-model-path", default=None, help="Silero VAD ONNX 模型路径，默认自动下载")
-    parser.add_argument("--vad-use-gpu", action="store_true", help="VAD 使用 GPU（需安装 onnxruntime-gpu）")
     args = parser.parse_args()
 
     ensure_port_available(args.ws_host, args.ws_port)
@@ -76,12 +73,9 @@ def main() -> None:
         agent_llm_api_url=args.agent_llm_url,
         agent_tasks_dir=args.agent_tasks_dir,
         agent_workdir=args.agent_workdir,
-        asr_model=args.asr_model,
         tts_model=args.tts_model,
         ref_dir=args.ref_dir,
         chat_size=args.chat_size,
-        vad_model_path=args.vad_model_path,
-        vad_use_gpu=args.vad_use_gpu,
     )
     if args.system_prompt:
         config.system_prompt = args.system_prompt

@@ -17,7 +17,6 @@ from vocamind.gateway.outbound import OutboundDispatcher
 from vocamind.gateway.serve_loop import run_serve_cycle
 from vocamind.gateway.session import ClientSession
 from vocamind.gateway.session_signals import SessionSignals
-from vocamind.gateway.vad import VADProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +32,7 @@ class WebSocketGateway:
         interruption_event: Event,
         assistant_turn_active: Event,
         session_lifecycle: SessionSignals,
-        spoken_prompt_queue: Queue,
+        text_prompt_queue: Queue,
         lm_response_queue: Queue,
         outbound_queue: Queue,
         config: PipelineConfig,
@@ -49,23 +48,9 @@ class WebSocketGateway:
         self._active_gen = 0
         self._ws_lock = asyncio.Lock()
 
-        vad = VADProcessor(
-            should_listen,
-            interruption_event,
-            chunk_size=config.chunk_size,
-            enable_interruption=config.enable_interruption,
-            thresh=config.vad_thresh,
-            sample_rate=config.sample_rate,
-            min_silence_ms=config.min_silence_ms,
-            min_speech_ms=config.min_speech_ms,
-            vad_model_path=config.vad_model_path,
-            vad_use_gpu=config.vad_use_gpu,
-        )
         self._inbound = InboundRouter(
-            spoken_prompt_queue,
-            should_listen,
+            text_prompt_queue,
             session_lifecycle,
-            vad,
             assistant_turn_active,
             interruption_event,
             lm_response_queue,

@@ -10,7 +10,7 @@ from vocamind.agent import build_agent_runtime, start_agent_runtime
 from vocamind.common import PipelineConfig
 from vocamind.common.handler import ThreadManager
 from vocamind.pipeline.state import PipelineContext
-from vocamind.pipeline.factories import create_gateway, create_stt, create_tts, create_voice_llm
+from vocamind.pipeline.factories import create_gateway, create_tts, create_voice_llm
 from vocamind.pipeline.notification import forward_task_notification
 from vocamind.tasks.store import get_task_store
 
@@ -38,7 +38,6 @@ def build_pipeline(config: PipelineConfig) -> ThreadManager:
     handlers = [
         create_tts(ctx, config),
         create_voice_llm(ctx, config),
-        create_stt(ctx, config),
         create_gateway(ctx, config),
     ]
     return ThreadManager(handlers)

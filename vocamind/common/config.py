@@ -1,4 +1,4 @@
-"""管道配置：通过参数化方式支持不同 ASR/TTS/LLM 后端与回复模式。"""
+"""管道配置：通过参数化方式支持不同 TTS/LLM 后端与回复模式。"""
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
@@ -10,11 +10,6 @@ class ReplyMode(str, Enum):
     """助手回复形式。"""
     AUDIO = "audio"
     TEXT = "text"
-
-
-class ASRBackend(str, Enum):
-    """语音识别后端。"""
-    API = "api"
 
 
 class TTSBackend(str, Enum):
@@ -30,25 +25,10 @@ class PipelineConfig:
     # WebSocket（单端口双向）
     ws_host: str = "0.0.0.0"
     ws_port: int = 9001
-    chunk_size: int = 2048
-    sample_rate: int = 16000
-
-    # VAD
-    vad_thresh: float = 0.3
-    min_silence_ms: int = 1200
-    min_speech_ms: int = 400
     enable_interruption: bool = True
-    vad_model_path: Optional[str] = None
-    vad_use_gpu: bool = False
 
     # 回复模式
     reply_mode: ReplyMode = ReplyMode.AUDIO
-
-    # ASR
-    asr_backend: ASRBackend = ASRBackend.API
-    asr_model: str = "FunAudioLLM/SenseVoiceSmall"
-    asr_api_url: str = "https://api.siliconflow.cn/v1/audio/transcriptions"
-    asr_api_key_env: str = "ASR_TTS_API_KEY"
 
     # LLM（OpenAI 兼容接口，保留作 Voice 默认）
     llm_model: str = "deepseek-chat"

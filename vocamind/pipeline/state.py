@@ -53,7 +53,6 @@ class PipelineContext:
     interruption_event: Event
     assistant_turn_active: Event
     session: SessionLifecycle
-    spoken_prompt_queue: Queue
     text_prompt_queue: Queue
     lm_response_queue: Queue
     outbound_queue: Queue
@@ -73,7 +72,6 @@ class PipelineContext:
             interruption_event=Event(),
             assistant_turn_active=Event(),
             session=SessionLifecycle(),
-            spoken_prompt_queue=Queue(),
             text_prompt_queue=Queue(),
             lm_response_queue=Queue(),
             outbound_queue=Queue(),

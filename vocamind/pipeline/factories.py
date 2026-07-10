@@ -1,26 +1,12 @@
-"""管道节点工厂：按配置实例化 ASR / Voice LLM / TTS / Gateway。"""
+"""管道节点工厂：按配置实例化 Voice LLM / TTS / Gateway。"""
 from __future__ import annotations
 
-from vocamind.asr import APISTTHandler
-from vocamind.common import ASRBackend, PipelineConfig, ReplyMode, TTSBackend
+from vocamind.common import PipelineConfig, ReplyMode, TTSBackend
 from vocamind.common.handler import BaseHandler
 from vocamind.gateway import WebSocketGateway
 from vocamind.pipeline.state import PipelineContext
 from vocamind.tts import APITTSHandler, PassthroughTTSHandler
 from vocamind.voice import VoiceOrchestratorHandler
-
-
-def create_stt(ctx: PipelineContext, config: PipelineConfig) -> BaseHandler:
-    if config.asr_backend != ASRBackend.API:
-        raise ValueError(f"不支持的 ASR 后端: {config.asr_backend}")
-    return APISTTHandler(
-        ctx.stop_event,
-        ctx.cur_conn_end_event,
-        queue_in=ctx.spoken_prompt_queue,
-        queue_out=ctx.text_prompt_queue,
-        config=config,
-        interruption_event=ctx.interruption_event,
-    )
 
 
 def create_voice_llm(ctx: PipelineContext, config: PipelineConfig) -> BaseHandler:
@@ -73,7 +59,7 @@ def create_gateway(ctx: PipelineContext, config: PipelineConfig) -> WebSocketGat
         interruption_event=ctx.interruption_event,
         assistant_turn_active=ctx.assistant_turn_active,
         session_lifecycle=ctx.session,
-        spoken_prompt_queue=ctx.spoken_prompt_queue,
+        text_prompt_queue=ctx.text_prompt_queue,
         lm_response_queue=ctx.lm_response_queue,
         outbound_queue=ctx.outbound_queue,
         config=config,

@@ -4,8 +4,9 @@
 
 ## 功能概览
 
-- **实时语音对话**：WebSocket 双向通信，VAD 语音活动检测，支持用户打断
-- **ASR / TTS**：通过 OpenAI 兼容 API 调用语音识别与合成（默认 SiliconFlow）
+- **实时语音对话**：WebSocket 双向通信，客户端 VAD + ASR，支持用户打断
+- **客户端 ASR**：语音识别在客户端完成（默认 SiliconFlow），后台只接收文字
+- **TTS**：通过 OpenAI 兼容 API 调用语音合成（默认 SiliconFlow）
 - **双 LLM 架构**：Voice LLM 负责前台对话与任务派发，Agent LLM 负责后台工具调用与任务执行
 - **Web 测试页**：内置 `frontend/index.html`，可在浏览器中快速体验语音对话
 - **Android 客户端**：基于 Tauri 2.0 的跨平台移动端，见 `vocamind_android/`
@@ -15,7 +16,8 @@
 
 - Python 3.10+
 - 可用的 LLM API（OpenAI 兼容，如 DeepSeek、火山引擎等）
-- ASR/TTS API Key（如 [SiliconFlow](https://siliconflow.cn/)）
+- TTS API Key（如 [SiliconFlow](https://siliconflow.cn/)）
+- 客户端语音输入需单独配置 ASR API Key（Web / Android 设置页填写）
 
 ## 快速开始
 
@@ -47,10 +49,11 @@ cp .env.example .env
 | `LLM_API_KEY` | 对话 LLM 的 API Key |
 | `LLM_API_URL` | LLM 接口地址，如 `https://api.deepseek.com` |
 | `LLM_MODEL` | 模型名称，如 `deepseek-chat` |
-| `ASR_TTS_API_KEY` | ASR/TTS 服务的 API Key |
+| `ASR_TTS_API_KEY` | TTS 服务的 API Key |
 | `AGENT_LLM_API_KEY` | 后台 Agent 的 API Key（可选，默认回落到 `LLM_API_KEY`） |
 
-> **注意**：`.env` 含敏感信息，已在 `.gitignore` 中排除，请勿提交到仓库。
+> **注意**：`.env` 含敏感信息，已在 `.gitignore` 中排除，请勿提交到仓库。  
+> **ASR** 已移至客户端，需在 Web / Android 设置页填写 ASR API Key，不再由后台 `.env` 提供。
 
 ### 4. （可选）配置 TTS 参考音色
 
@@ -79,11 +82,23 @@ python main.py --ws-port 9001 --reply-mode audio --no-interruption
 
 ### 6. 打开 Web 测试页
 
-用浏览器打开 `frontend/index.html`，将 WebSocket 地址设为 `ws://localhost:9001`，即可开始语音对话。
+用浏览器打开 `frontend/index.html`，填写 WebSocket 地址与 ASR API Key，即可开始语音对话。
+
+## 架构说明
+
+```
+客户端                          后台 (python main.py)
+┌─────────────────────┐        ┌──────────────────────┐
+│ 麦克风 → VAD → ASR  │─text─→│ Voice LLM → TTS      │
+│ (SiliconFlow API)   │←─ws───│ Agent / 记忆 / 任务   │
+└─────────────────────┘        └──────────────────────┘
+```
+
+语音转文字在客户端完成，后台只处理文字对话、TTS 播报和 Agent 任务，逻辑更清晰。
 
 ## Android 客户端（Tauri 2.0）
 
-Android 端位于 `vocamind_android/`，使用 Tauri 2.0 + 原生 WebView，通过 WebSocket 连接后端语音服务。
+Android 端位于 `vocamind_android/`，使用 Tauri 2.0 + 原生 WebView。语音在客户端识别后，通过 WebSocket 发送文字给后台。
 
 ### 环境要求
 
@@ -100,10 +115,10 @@ npm install
 npm run tauri android dev
 ```
 
-### WebSocket 地址
+### WebSocket 与 ASR 配置
 
-- **Android 模拟器**：默认 `ws://10.0.2.2:9001`（映射宿主机 localhost）
-- **真机调试**：改为电脑的局域网 IP，如 `ws://192.168.1.100:9001`
+- **WebSocket**：模拟器默认 `ws://10.0.2.2:9001`，真机改为电脑局域网 IP
+- **ASR API Key**：在 App 设置页填写（与后台 `.env` 独立）
 
 需先在本机启动 Python 后端（`python main.py`），再运行 Android 客户端。
 
@@ -113,8 +128,7 @@ npm run tauri android dev
 VocaMind/
 ├── main.py              # 命令行入口
 ├── vocamind/
-│   ├── gateway/         # WebSocket 网关、VAD、会话管理
-│   ├── asr/             # 语音识别
+│   ├── gateway/         # WebSocket 网关、会话管理
 │   ├── tts/             # 语音合成
 │   ├── llm/             # LLM 流式调用
 │   ├── voice/           # 前台 Voice 对话逻辑

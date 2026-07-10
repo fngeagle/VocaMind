@@ -2,8 +2,13 @@ import { VoiceConnection } from "./js/voice_connection.js";
 import { defaultWsUrl } from "./js/ws_config.js";
 import { requestMicStream } from "./js/mic_session.js";
 import { PcmFrameBuffer, resampleTo16k } from "./js/audio_resample.js";
+import { ClientVAD } from "./js/client_vad.js";
+import { transcribeAudio, DEFAULT_ASR_URL, DEFAULT_ASR_MODEL } from "./js/client_asr.js";
 
 const SAMPLE_RATE = 16000;
+const ASR_KEY_STORAGE = "vocamind_asr_api_key";
+const ASR_URL_STORAGE = "vocamind_asr_api_url";
+const ASR_MODEL_STORAGE = "vocamind_asr_model";
 const uid = crypto.randomUUID();
 
 let connection = null;
@@ -17,6 +22,7 @@ let micStream = null;
 let micContext = null;
 let micProcessor = null;
 let pcmFrameBuffer = null;
+let clientVad = null;
 
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 const audioQueue = [];
@@ -31,14 +37,19 @@ const sendBtn = $("sendBtn");
 const connectBtn = $("connectBtn");
 const micBtn = $("micBtn");
 
-function float32ToBase64(samples) {
-  const bytes = new Uint8Array(samples.buffer, samples.byteOffset, samples.byteLength);
-  let binary = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-  }
-  return btoa(binary);
+function getAsrConfig() {
+  return {
+    apiKey: $("asrKey")?.value?.trim() || localStorage.getItem(ASR_KEY_STORAGE) || "",
+    apiUrl: $("asrUrl")?.value?.trim() || localStorage.getItem(ASR_URL_STORAGE) || DEFAULT_ASR_URL,
+    model: $("asrModel")?.value?.trim() || localStorage.getItem(ASR_MODEL_STORAGE) || DEFAULT_ASR_MODEL,
+  };
+}
+
+function persistAsrConfig() {
+  const cfg = getAsrConfig();
+  localStorage.setItem(ASR_KEY_STORAGE, cfg.apiKey);
+  localStorage.setItem(ASR_URL_STORAGE, cfg.apiUrl);
+  localStorage.setItem(ASR_MODEL_STORAGE, cfg.model);
 }
 
 function stopPlayback() {
@@ -53,22 +64,45 @@ function stopPlayback() {
   notifyPlaying(false);
 }
 
-function sendAudioChunk(samples) {
-  if (!connection?.isOpen) return;
-  connection.send({
-    uid,
-    audio: float32ToBase64(samples),
-    is_playing: audioPlaying ? "true" : "false",
-  });
+function onSpeechStart() {
+  if (audioPlaying) {
+    stopPlayback();
+  }
 }
 
-function onVadDetected() {
+async function onSpeechSegment(segment) {
+  if (!connection?.isOpen || busy) return;
+
   userInputCount += 1;
   busy = true;
   sendBtn.disabled = true;
   finishAssistantBubble();
   lastUserEl = appendMsg("user", "🎤 识别中…");
   setStatus("识别中…", "busy");
+
+  try {
+    const text = await transcribeAudio(segment, {
+      ...getAsrConfig(),
+      sampleRate: SAMPLE_RATE,
+    });
+    if (!text) {
+      throw new Error("未识别到语音内容");
+    }
+    if (lastUserEl) {
+      lastUserEl.textContent = text;
+    }
+    connection.send({ uid, text, audio_input: true });
+  } catch (err) {
+    busy = false;
+    sendBtn.disabled = false;
+    lastUserEl = null;
+    setStatus(err.message || "语音识别失败", "err");
+    console.error(err);
+  }
+}
+
+function processMicFrame(frame) {
+  clientVad?.pushFrame(frame);
 }
 
 function handleSocketMessage(data) {
@@ -76,11 +110,6 @@ function handleSocketMessage(data) {
     if (!data.uid || data.uid === uid) {
       stopPlayback();
     }
-    return;
-  }
-  if (data.return_info === "VAD detected") {
-    stopPlayback();
-    onVadDetected();
     return;
   }
   if (
@@ -98,20 +127,29 @@ async function startMic() {
     setStatus("请先连接", "err");
     return;
   }
+  persistAsrConfig();
+  if (!getAsrConfig().apiKey) {
+    setStatus("请先填写 ASR API Key", "err");
+    return;
+  }
   try {
     await audioCtx.resume();
     micStream = await requestMicStream();
-    // Android WebView 常忽略 sampleRate 参数，实际多为 48kHz，必须重采样到 16kHz
     micContext = new AudioContext();
     const captureRate = micContext.sampleRate;
     pcmFrameBuffer = new PcmFrameBuffer();
+    clientVad = new ClientVAD({
+      sampleRate: SAMPLE_RATE,
+      onSpeechStart,
+      onSpeechSegment,
+    });
     const source = micContext.createMediaStreamSource(micStream);
     micProcessor = micContext.createScriptProcessor(4096, 1, 1);
     micProcessor.onaudioprocess = (ev) => {
       if (!micOn) return;
       const raw = ev.inputBuffer.getChannelData(0);
       const pcm16k = resampleTo16k(raw, captureRate);
-      pcmFrameBuffer.push(pcm16k, sendAudioChunk);
+      pcmFrameBuffer.push(pcm16k, processMicFrame);
     };
     source.connect(micProcessor);
     micProcessor.connect(micContext.destination);
@@ -127,6 +165,8 @@ async function startMic() {
 
 function stopMic() {
   micOn = false;
+  clientVad?.reset();
+  clientVad = null;
   pcmFrameBuffer?.reset();
   pcmFrameBuffer = null;
   micProcessor?.disconnect();
@@ -327,6 +367,9 @@ async function sendText() {
 
 export function initVoiceApp() {
   $("wsUrl").value = defaultWsUrl();
+  $("asrUrl").value = localStorage.getItem(ASR_URL_STORAGE) || DEFAULT_ASR_URL;
+  $("asrModel").value = localStorage.getItem(ASR_MODEL_STORAGE) || DEFAULT_ASR_MODEL;
+  $("asrKey").value = localStorage.getItem(ASR_KEY_STORAGE) || "";
 
   connectBtn.addEventListener("click", connect);
   micBtn.addEventListener("click", toggleMic);
@@ -336,6 +379,9 @@ export function initVoiceApp() {
       e.preventDefault();
       sendText();
     }
+  });
+  ["asrKey", "asrUrl", "asrModel"].forEach((id) => {
+    $(id)?.addEventListener("change", persistAsrConfig);
   });
 }
 
